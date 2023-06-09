@@ -1,0 +1,12 @@
+[package]
+name = "mapped_futures_2"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures-core = "0.3.28"
+futures-task = "0.3.28"
+futures-util = "0.3.28"
+linked-hash-map = "0.5.6"
