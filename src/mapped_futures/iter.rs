@@ -1,5 +1,5 @@
 use super::task::Task;
-use super::FuturesUnordered;
+use super::MappedFutures;
 use core::hash::Hash;
 use core::marker::PhantomData;
 use core::pin::Pin;
@@ -8,37 +8,37 @@ use core::sync::atomic::Ordering::Relaxed;
 
 /// Mutable iterator over all futures in the unordered set.
 #[derive(Debug)]
-pub struct IterPinMut<'a, K: Hash + Eq, Fut> {
+pub struct IterPinMut<'a, K: Hash + Eq + Clone, Fut> {
     pub(super) task: *const Task<K, Fut>,
     pub(super) len: usize,
-    pub(super) _marker: PhantomData<&'a mut FuturesUnordered<K, Fut>>,
+    pub(super) _marker: PhantomData<&'a mut MappedFutures<K, Fut>>,
 }
 
 /// Mutable iterator over all futures in the unordered set.
 #[derive(Debug)]
-pub struct IterMut<'a, K: Hash + Eq, Fut: Unpin>(pub(super) IterPinMut<'a, K, Fut>);
+pub struct IterMut<'a, K: Hash + Eq + Clone, Fut: Unpin>(pub(super) IterPinMut<'a, K, Fut>);
 
 /// Immutable iterator over all futures in the unordered set.
 #[derive(Debug)]
-pub struct IterPinRef<'a, K: Hash + Eq, Fut> {
+pub struct IterPinRef<'a, K: Hash + Eq + Clone, Fut> {
     pub(super) task: *const Task<K, Fut>,
     pub(super) len: usize,
     pub(super) pending_next_all: *mut Task<K, Fut>,
-    pub(super) _marker: PhantomData<&'a FuturesUnordered<K, Fut>>,
+    pub(super) _marker: PhantomData<&'a MappedFutures<K, Fut>>,
 }
 
 /// Immutable iterator over all the futures in the unordered set.
 #[derive(Debug)]
-pub struct Iter<'a, K: Hash + Eq, Fut: Unpin>(pub(super) IterPinRef<'a, K, Fut>);
+pub struct Iter<'a, K: Hash + Eq + Clone, Fut: Unpin>(pub(super) IterPinRef<'a, K, Fut>);
 
 /// Owned iterator over all futures in the unordered set.
 #[derive(Debug)]
-pub struct IntoIter<K: Hash + Eq, Fut: Unpin> {
+pub struct IntoIter<K: Hash + Eq + Clone, Fut: Unpin> {
     pub(super) len: usize,
-    pub(super) inner: FuturesUnordered<K, Fut>,
+    pub(super) inner: MappedFutures<K, Fut>,
 }
 
-impl<K: Hash + Eq, Fut: Unpin> Iterator for IntoIter<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut: Unpin> Iterator for IntoIter<K, Fut> {
     type Item = Fut;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -54,7 +54,7 @@ impl<K: Hash + Eq, Fut: Unpin> Iterator for IntoIter<K, Fut> {
             // Moving out of the future is safe because it is `Unpin`
             let future = (*(**task).future.get()).take().unwrap();
 
-            // Mutable access to a previously shared `FuturesUnordered` implies
+            // Mutable access to a previously shared `MappedFutures` implies
             // that the other threads already released the object before the
             // current thread acquired it, so relaxed ordering can be used and
             // valid `next_all` checks can be skipped.
@@ -73,9 +73,9 @@ impl<K: Hash + Eq, Fut: Unpin> Iterator for IntoIter<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut: Unpin> ExactSizeIterator for IntoIter<K, Fut> {}
+impl<K: Hash + Eq + Clone, Fut: Unpin> ExactSizeIterator for IntoIter<K, Fut> {}
 
-impl<'a, K: Hash + Eq, Fut> Iterator for IterPinMut<'a, K, Fut> {
+impl<'a, K: Hash + Eq + Clone, Fut> Iterator for IterPinMut<'a, K, Fut> {
     type Item = Pin<&'a mut Fut>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -86,7 +86,7 @@ impl<'a, K: Hash + Eq, Fut> Iterator for IterPinMut<'a, K, Fut> {
         unsafe {
             let future = (*(*self.task).future.get()).as_mut().unwrap();
 
-            // Mutable access to a previously shared `FuturesUnordered` implies
+            // Mutable access to a previously shared `MappedFutures` implies
             // that the other threads already released the object before the
             // current thread acquired it, so relaxed ordering can be used and
             // valid `next_all` checks can be skipped.
@@ -102,9 +102,9 @@ impl<'a, K: Hash + Eq, Fut> Iterator for IterPinMut<'a, K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut> ExactSizeIterator for IterPinMut<'_, K, Fut> {}
+impl<K: Hash + Eq + Clone, Fut> ExactSizeIterator for IterPinMut<'_, K, Fut> {}
 
-impl<'a, K: Hash + Eq, Fut: Unpin> Iterator for IterMut<'a, K, Fut> {
+impl<'a, K: Hash + Eq + Clone, Fut: Unpin> Iterator for IterMut<'a, K, Fut> {
     type Item = &'a mut Fut;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -116,9 +116,9 @@ impl<'a, K: Hash + Eq, Fut: Unpin> Iterator for IterMut<'a, K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut: Unpin> ExactSizeIterator for IterMut<'_, K, Fut> {}
+impl<K: Hash + Eq + Clone, Fut: Unpin> ExactSizeIterator for IterMut<'_, K, Fut> {}
 
-impl<'a, K: Hash + Eq, Fut> Iterator for IterPinRef<'a, K, Fut> {
+impl<'a, K: Hash + Eq + Clone, Fut> Iterator for IterPinRef<'a, K, Fut> {
     type Item = Pin<&'a Fut>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -145,9 +145,9 @@ impl<'a, K: Hash + Eq, Fut> Iterator for IterPinRef<'a, K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut> ExactSizeIterator for IterPinRef<'_, K, Fut> {}
+impl<K: Hash + Eq + Clone, Fut> ExactSizeIterator for IterPinRef<'_, K, Fut> {}
 
-impl<'a, K: Hash + Eq, Fut: Unpin> Iterator for Iter<'a, K, Fut> {
+impl<'a, K: Hash + Eq + Clone, Fut: Unpin> Iterator for Iter<'a, K, Fut> {
     type Item = &'a Fut;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -159,15 +159,15 @@ impl<'a, K: Hash + Eq, Fut: Unpin> Iterator for Iter<'a, K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut: Unpin> ExactSizeIterator for Iter<'_, K, Fut> {}
+impl<K: Hash + Eq + Clone, Fut: Unpin> ExactSizeIterator for Iter<'_, K, Fut> {}
 
 // SAFETY: we do nothing thread-local and there is no interior mutability,
 // so the usual structural `Send`/`Sync` apply.
-unsafe impl<K: Hash + Eq, Fut: Send> Send for IterPinRef<'_, K, Fut> {}
-unsafe impl<K: Hash + Eq, Fut: Sync> Sync for IterPinRef<'_, K, Fut> {}
+unsafe impl<K: Hash + Eq + Clone, Fut: Send> Send for IterPinRef<'_, K, Fut> {}
+unsafe impl<K: Hash + Eq + Clone, Fut: Sync> Sync for IterPinRef<'_, K, Fut> {}
 
-unsafe impl<K: Hash + Eq, Fut: Send> Send for IterPinMut<'_, K, Fut> {}
-unsafe impl<K: Hash + Eq, Fut: Sync> Sync for IterPinMut<'_, K, Fut> {}
+unsafe impl<K: Hash + Eq + Clone, Fut: Send> Send for IterPinMut<'_, K, Fut> {}
+unsafe impl<K: Hash + Eq + Clone, Fut: Sync> Sync for IterPinMut<'_, K, Fut> {}
 
-unsafe impl<K: Hash + Eq, Fut: Send + Unpin> Send for IntoIter<K, Fut> {}
-unsafe impl<K: Hash + Eq, Fut: Sync + Unpin> Sync for IntoIter<K, Fut> {}
+unsafe impl<K: Hash + Eq + Clone, Fut: Send + Unpin> Send for IntoIter<K, Fut> {}
+unsafe impl<K: Hash + Eq + Clone, Fut: Sync + Unpin> Sync for IntoIter<K, Fut> {}

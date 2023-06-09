@@ -9,4 +9,7 @@ edition = "2021"
 futures-core = "0.3.28"
 futures-task = "0.3.28"
 futures-util = "0.3.28"
-linked-hash-map = "0.5.6"
+
+[dev-dependencies]
+futures = "0.3.0"
+futures-timer = "3.0.2"

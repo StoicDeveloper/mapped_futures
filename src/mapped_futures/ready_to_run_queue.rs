@@ -5,32 +5,29 @@ use core::hash::Hash;
 use core::ptr;
 use core::sync::atomic::AtomicPtr;
 use core::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
-use std::collections::HashMap;
 
 use super::abort::abort;
 use super::task::Task;
 
-pub(super) enum Dequeue<K: Hash + Eq, Fut> {
+pub(super) enum Dequeue<K: Hash + Eq + Clone, Fut> {
     Data(*const Task<K, Fut>),
     Empty,
     Inconsistent,
 }
 
-pub(super) struct ReadyToRunQueue<K: Hash + Eq, Fut> {
-    // The waker of the task using `FuturesUnordered`.
+pub(super) struct ReadyToRunQueue<K: Hash + Eq + Clone, Fut> {
+    // The waker of the task using `MappedFutures`.
     pub(super) waker: AtomicWaker,
 
     // Head/tail of the readiness queue
     pub(super) head: AtomicPtr<Task<K, Fut>>,
     pub(super) tail: UnsafeCell<*const Task<K, Fut>>,
     pub(super) stub: Arc<Task<K, Fut>>,
-
-    pub(super) hash_map: HashMap<K, AtomicPtr<Task<K, Fut>>>,
 }
 
 /// An MPSC queue into which the tasks containing the futures are inserted
 /// whenever the future inside is scheduled for polling.
-impl<K: Hash + Eq, Fut> ReadyToRunQueue<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut> ReadyToRunQueue<K, Fut> {
     /// The enqueue function from the 1024cores intrusive MPSC queue algorithm.
     pub(super) fn enqueue(&self, task: *const Task<K, Fut>) {
         unsafe {
@@ -98,7 +95,7 @@ impl<K: Hash + Eq, Fut> ReadyToRunQueue<K, Fut> {
     //
     // # Safety
     //
-    // - All tasks **must** have had their futures dropped already (by FuturesUnordered::clear)
+    // - All tasks **must** have had their futures dropped already (by MappedFutures::clear)
     // - The caller **must** guarantee unique access to `self`
     pub(crate) unsafe fn clear(&self) {
         loop {
@@ -112,12 +109,12 @@ impl<K: Hash + Eq, Fut> ReadyToRunQueue<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut> Drop for ReadyToRunQueue<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut> Drop for ReadyToRunQueue<K, Fut> {
     fn drop(&mut self) {
         // Once we're in the destructor for `Inner<Fut>` we need to clear out
         // the ready to run queue of tasks if there's anything left in there.
 
-        // All tasks have had their futures dropped already by the `FuturesUnordered`
+        // All tasks have had their futures dropped already by the `MappedFutures`
         // destructor above, and we have &mut self, so this is safe.
         unsafe {
             self.clear();
