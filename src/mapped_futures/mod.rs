@@ -193,9 +193,9 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
         // in the order that would have been expected had remove() not been called
         if let Some(mut task) = self.hash_map.remove(key) {
             unsafe {
-                if let Some(_) = *(**task.get_mut()).future.get() {
-                    // self.unlink(*(task.get_mut()));
-                    self.unlink(task);
+                if let Some(fut) = (*(**task.get_mut()).future.get()).take() {
+                    self.unlink(*(task.get_mut()));
+                    // self.unlink(task);
                     println!("Unlinked task with key {:?}", key);
                     return true;
                 }
@@ -770,13 +770,9 @@ pub mod tests {
 
         assert_eq!(block_on(futures.next()).unwrap().0, 1);
         assert_eq!(futures.remove(&3), true);
-        // block_on(futures.next());
         assert_eq!(block_on(futures.next()).unwrap().0, 2);
-        // assert_eq!(block_on(futures.next()).unwrap().0, 3);
         assert_eq!(block_on(futures.next()).unwrap().0, 4);
         assert_eq!(block_on(futures.next()), None);
-
-        // block_on(futures.next()).unwrap().0;
-        // assert_eq!(block_on(futures.next()).unwrap().0, 4);
     }
+
 }
