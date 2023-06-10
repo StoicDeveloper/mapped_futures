@@ -181,7 +181,7 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
     pub fn remove(&mut self, key: &K) -> bool {
         if let Some(mut task) = self.hash_map.remove(key) {
             unsafe {
-                if let Some(fut) = (*(**task.get_mut()).future.get()).take() {
+                if let Some(_) = (*(**task.get_mut()).future.get()).take() {
                     self.unlink(*(task.get_mut()));
                     return true;
                 }
@@ -210,9 +210,12 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
     pub fn contains(&mut self, key: &K) -> bool {
         self.hash_map.contains_key(key)
     }
-    
+
     /// Get a mutable reference to the mapped future.
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut Fut> {
+    ///
+    /// Creates undefined behaviour if the original inserted futures was not pinned, such as with
+    /// Box::pin().
+    pub unsafe fn get_mut_pinned(&mut self, key: &K) -> Option<&mut Fut> {
         if let Some(task_ptr) = self.hash_map.get_mut(key) {
             unsafe {
                 if let Some(fut) = &mut *(**task_ptr.get_mut()).future.get() {
@@ -221,6 +224,19 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
             }
         }
         None
+    }
+
+    /// Get a pinned mutable reference to the mapped future.
+    pub fn get_mut(&mut self, key: &K) -> Option<Pin<&mut Fut>> {
+        unsafe { self.get_mut_pinned(key).map(|fut| Pin::new_unchecked(fut)) }
+        // if let Some(task_ptr) = self.hash_map.get_mut(key) {
+        //     unsafe {
+        //         if let Some(fut) = &mut *(**task_ptr.get_mut()).future.get() {
+        //             return Some(fut);
+        //         }
+        //     }
+        // }
+        // None
     }
 
     /// Get a shared reference to the mapped future.
@@ -747,15 +763,19 @@ pub mod tests {
     use futures_util::StreamExt;
     // insert some futures, await one, remove another, then
     use futures::executor::block_on;
+    use futures::future::LocalBoxFuture;
     use futures_timer::Delay;
     use std::time::Duration;
-    use futures::future::LocalBoxFuture;
 
     fn insert_millis(futs: &mut MappedFutures<u32, Delay>, key: u32, millis: u64) {
         futs.insert(key, Delay::new(Duration::from_millis(millis)))
     }
 
-    fn insert_millis_pinned(futs: &mut MappedFutures<u32, LocalBoxFuture<'static, ()>>, key: u32, millis: u64) {
+    fn insert_millis_pinned(
+        futs: &mut MappedFutures<u32, LocalBoxFuture<'static, ()>>,
+        key: u32,
+        millis: u64,
+    ) {
         futs.insert(key, Box::pin(Delay::new(Duration::from_millis(millis))))
     }
 
@@ -782,7 +802,7 @@ pub mod tests {
         insert_millis_pinned(&mut futures, 4, 200);
 
         assert_eq!(block_on(futures.next()).unwrap().0, 1);
-        assert_eq!(block_on(unsafe {futures.remove_pinned(&3)}.unwrap()), ());
+        assert_eq!(block_on(unsafe { futures.remove_pinned(&3) }.unwrap()), ());
         insert_millis_pinned(&mut futures, 2, 60);
         assert_eq!(block_on(futures.next()).unwrap().0, 4);
         assert_eq!(block_on(futures.next()).unwrap().0, 2);
@@ -798,7 +818,10 @@ pub mod tests {
         insert_millis(&mut futures, 4, 200);
 
         assert_eq!(block_on(futures.next()).unwrap().0, 1);
-        futures.get_mut(&3).unwrap().reset(Duration::from_millis(30));
+        futures
+            .get_mut(&3)
+            .unwrap()
+            .reset(Duration::from_millis(30));
         assert_eq!(block_on(futures.next()).unwrap().0, 3);
         assert_eq!(block_on(futures.next()).unwrap().0, 2);
         assert_eq!(block_on(futures.next()).unwrap().0, 4);
