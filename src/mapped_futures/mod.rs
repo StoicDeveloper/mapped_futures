@@ -174,11 +174,7 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
     }
 
     /// Remove a future from the set, dropping it.
-    ///
-    /// Removes and drops the mapped future. Cannot return the future, because this module may have
-    /// previously used its reference to call Pin::new_unchecked(). Returning it unpinned here would create
-    /// undefined behaviour. Returns `true` if a future was removed.
-    pub fn remove(&mut self, key: &K) -> bool {
+    pub fn cancel(&mut self, key: &K) -> bool {
         if let Some(mut task) = self.hash_map.remove(key) {
             unsafe {
                 if let Some(_) = (*(**task.get_mut()).future.get()).take() {
@@ -191,10 +187,10 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
     }
 
     /// Remove a future from the set and return it.
-    ///
-    /// Removes and returns the mapped future. The caller must guarantee that the future was
-    /// inserted pinned, such as with Box::pin(), or else the move will create undefined behaviour.
-    pub unsafe fn remove_pinned(&mut self, key: &K) -> Option<Fut> {
+    pub fn remove(&mut self, key: &K) -> Option<Fut>
+    where
+        Fut: Unpin,
+    {
         if let Some(mut task) = self.hash_map.remove(key) {
             unsafe {
                 if let Some(fut) = (*(**task.get_mut()).future.get()).take() {
@@ -211,11 +207,23 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
         self.hash_map.contains_key(key)
     }
 
-    /// Get a mutable reference to the mapped future.
-    ///
-    /// Creates undefined behaviour if the original inserted futures was not pinned, such as with
-    /// Box::pin().
-    pub unsafe fn get_mut_pinned(&mut self, key: &K) -> Option<&mut Fut> {
+    /// Get a pinned mutable reference to the mapped future.
+    pub fn get_pin_mut(&mut self, key: &K) -> Option<Pin<&mut Fut>> {
+        if let Some(task_ptr) = self.hash_map.get_mut(key) {
+            unsafe {
+                if let Some(fut) = &mut *(**task_ptr.get_mut()).future.get() {
+                    return Some(Pin::new_unchecked(fut));
+                }
+            }
+        }
+        None
+    }
+
+    /// Get a pinned mutable reference to the mapped future.
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut Fut>
+    where
+        Fut: Unpin,
+    {
         if let Some(task_ptr) = self.hash_map.get_mut(key) {
             unsafe {
                 if let Some(fut) = &mut *(**task_ptr.get_mut()).future.get() {
@@ -226,25 +234,27 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
         None
     }
 
-    /// Get a pinned mutable reference to the mapped future.
-    pub fn get_mut(&mut self, key: &K) -> Option<Pin<&mut Fut>> {
-        unsafe { self.get_mut_pinned(key).map(|fut| Pin::new_unchecked(fut)) }
-        // if let Some(task_ptr) = self.hash_map.get_mut(key) {
-        //     unsafe {
-        //         if let Some(fut) = &mut *(**task_ptr.get_mut()).future.get() {
-        //             return Some(fut);
-        //         }
-        //     }
-        // }
-        // None
-    }
-
     /// Get a shared reference to the mapped future.
-    pub fn get(&mut self, key: &K) -> Option<&Fut> {
+    pub fn get(&mut self, key: &K) -> Option<&Fut>
+    where
+        Fut: Unpin,
+    {
         if let Some(task_ptr) = self.hash_map.get_mut(key) {
             unsafe {
                 if let Some(fut) = &*(**task_ptr.get_mut()).future.get() {
                     return Some(fut);
+                }
+            }
+        }
+        None
+    }
+
+    /// Get a pinned shared reference to the mapped future.
+    pub fn get_pin(&mut self, key: &K) -> Option<Pin<&Fut>> {
+        if let Some(task_ptr) = self.hash_map.get_mut(key) {
+            unsafe {
+                if let Some(fut) = &*(**task_ptr.get_mut()).future.get() {
+                    return Some(Pin::new_unchecked(fut));
                 }
             }
         }
@@ -788,7 +798,7 @@ pub mod tests {
         insert_millis(&mut futures, 4, 200);
 
         assert_eq!(block_on(futures.next()).unwrap().0, 1);
-        assert_eq!(futures.remove(&3), true);
+        assert_eq!(futures.cancel(&3), true);
         assert_eq!(block_on(futures.next()).unwrap().0, 2);
         assert_eq!(block_on(futures.next()).unwrap().0, 4);
         assert_eq!(block_on(futures.next()), None);
@@ -802,7 +812,7 @@ pub mod tests {
         insert_millis_pinned(&mut futures, 4, 200);
 
         assert_eq!(block_on(futures.next()).unwrap().0, 1);
-        assert_eq!(block_on(unsafe { futures.remove_pinned(&3) }.unwrap()), ());
+        assert_eq!(block_on(futures.remove(&3).unwrap()), ());
         insert_millis_pinned(&mut futures, 2, 60);
         assert_eq!(block_on(futures.next()).unwrap().0, 4);
         assert_eq!(block_on(futures.next()).unwrap().0, 2);
