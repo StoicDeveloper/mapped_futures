@@ -47,16 +47,16 @@ use self::ready_to_run_queue::{Dequeue, ReadyToRunQueue};
 /// [`collect`](Iterator::collect) method, or you can start with an empty set
 /// with the [`MappedFutures::new`] constructor.
 #[must_use = "streams do nothing unless polled"]
-pub struct MappedFutures<K: Hash + Eq + Clone + std::fmt::Debug, Fut> {
+pub struct MappedFutures<K: Hash + Eq + Clone, Fut> {
     hash_map: HashMap<K, AtomicPtr<Task<K, Fut>>>,
     ready_to_run_queue: Arc<ReadyToRunQueue<K, Fut>>,
     head_all: AtomicPtr<Task<K, Fut>>,
     is_terminated: AtomicBool,
 }
 
-unsafe impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut: Send> Send for MappedFutures<K, Fut> {}
-unsafe impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut: Sync> Sync for MappedFutures<K, Fut> {}
-impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Unpin for MappedFutures<K, Fut> {}
+unsafe impl<K: Hash + Eq + Clone, Fut: Send> Send for MappedFutures<K, Fut> {}
+unsafe impl<K: Hash + Eq + Clone, Fut: Sync> Sync for MappedFutures<K, Fut> {}
+impl<K: Hash + Eq + Clone, Fut> Unpin for MappedFutures<K, Fut> {}
 
 // MappedFutures is implemented using two linked lists. One which links all
 // futures managed by a `MappedFutures` and one that tracks futures that have
@@ -83,13 +83,13 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Unpin for MappedFutures<K, Fut
 // notification is received, the task will only be inserted into the ready to
 // run queue if it isn't inserted already.
 
-impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Default for MappedFutures<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut> Default for MappedFutures<K, Fut> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
     /// Constructs a new, empty [`MappedFutures`].
     ///
     /// The returned [`MappedFutures`] does not contain any futures.
@@ -476,7 +476,7 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut: Future> Stream for MappedFutures<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut: Future> Stream for MappedFutures<K, Fut> {
     type Item = (K, Fut::Output);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -569,12 +569,12 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut: Future> Stream for MappedFutur
             // * We unlink the task from our internal queue to preemptively
             //   assume it'll panic, in which case we'll want to discard it
             //   regardless.
-            struct Bomb<'a, K: Hash + Eq + Clone + std::fmt::Debug, Fut> {
+            struct Bomb<'a, K: Hash + Eq + Clone, Fut> {
                 queue: &'a mut MappedFutures<K, Fut>,
                 task: Option<Arc<Task<K, Fut>>>,
             }
 
-            impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Drop for Bomb<'_, K, Fut> {
+            impl<K: Hash + Eq + Clone, Fut> Drop for Bomb<'_, K, Fut> {
                 fn drop(&mut self) {
                     if let Some(task) = self.task.take() {
                         self.queue.release_task(task);
@@ -647,13 +647,13 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut: Future> Stream for MappedFutur
     }
 }
 
-impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Debug for MappedFutures<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut> Debug for MappedFutures<K, Fut> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "MappedFutures {{ ... }}")
     }
 }
 
-impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
     /// Clears the set, removing all futures.
     pub fn clear(&mut self) {
         self.clear_head_all();
@@ -674,7 +674,7 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Drop for MappedFutures<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut> Drop for MappedFutures<K, Fut> {
     fn drop(&mut self) {
         // When a `MappedFutures` is dropped we want to drop all futures
         // associated with it. At the same time though there may be tons of
@@ -697,9 +697,7 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Drop for MappedFutures<K, Fut>
     }
 }
 
-impl<'a, K: Hash + Eq + Clone + std::fmt::Debug, Fut: Unpin> IntoIterator
-    for &'a MappedFutures<K, Fut>
-{
+impl<'a, K: Hash + Eq + Clone, Fut: Unpin> IntoIterator for &'a MappedFutures<K, Fut> {
     type Item = &'a Fut;
     type IntoIter = Iter<'a, K, Fut>;
 
@@ -708,9 +706,7 @@ impl<'a, K: Hash + Eq + Clone + std::fmt::Debug, Fut: Unpin> IntoIterator
     }
 }
 
-impl<'a, K: Hash + Eq + Clone + std::fmt::Debug, Fut: Unpin> IntoIterator
-    for &'a mut MappedFutures<K, Fut>
-{
+impl<'a, K: Hash + Eq + Clone, Fut: Unpin> IntoIterator for &'a mut MappedFutures<K, Fut> {
     type Item = &'a mut Fut;
     type IntoIter = IterMut<'a, K, Fut>;
 
@@ -719,7 +715,7 @@ impl<'a, K: Hash + Eq + Clone + std::fmt::Debug, Fut: Unpin> IntoIterator
     }
 }
 
-impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut: Unpin> IntoIterator for MappedFutures<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut: Unpin> IntoIterator for MappedFutures<K, Fut> {
     type Item = Fut;
     type IntoIter = IntoIter<K, Fut>;
 
@@ -737,7 +733,7 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut: Unpin> IntoIterator for Mapped
     }
 }
 
-impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> FromIterator<(K, Fut)> for MappedFutures<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut> FromIterator<(K, Fut)> for MappedFutures<K, Fut> {
     fn from_iter<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = (K, Fut)>,
@@ -750,13 +746,13 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> FromIterator<(K, Fut)> for Map
     }
 }
 
-impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut: Future> FusedStream for MappedFutures<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut: Future> FusedStream for MappedFutures<K, Fut> {
     fn is_terminated(&self) -> bool {
         self.is_terminated.load(Relaxed)
     }
 }
 
-impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Extend<(K, Fut)> for MappedFutures<K, Fut> {
+impl<K: Hash + Eq + Clone, Fut> Extend<(K, Fut)> for MappedFutures<K, Fut> {
     fn extend<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = (K, Fut)>,
