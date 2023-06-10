@@ -64,7 +64,7 @@ impl<K: Hash + Eq, Fut> Borrow<K> for HashTask<K, Fut> {
 
 impl<K: Hash + Eq, Fut> Hash for HashTask<K, Fut> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.key.get().hash(state)
+        unsafe {(*self.key.get()).as_ref()}.unwrap().hash(state)
     }
 }
 
