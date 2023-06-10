@@ -104,7 +104,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mapped_futures_2"
+name = "mapped_futures"
 version = "0.1.0"
 dependencies = [
  "futures",

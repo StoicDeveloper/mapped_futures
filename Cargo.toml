@@ -1,7 +1,10 @@
 [package]
-name = "mapped_futures_2"
+name = "mapped_futures"
 version = "0.1.0"
 edition = "2021"
+license = "GPL-3.0"
+keywords = ["hash", "map", "future", "FuturesUnordered", "HashMap"]
+categories = ["asynchronous"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

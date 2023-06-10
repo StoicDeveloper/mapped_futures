@@ -8,7 +8,7 @@ use super::ReadyToRunQueue;
 use crate::task::{waker_ref, ArcWake, WakerRef};
 use core::hash::Hash;
 
-pub(super) struct Task<K: Hash + Eq + Clone, Fut> {
+pub(super) struct Task<K: Hash + Eq + Clone + std::fmt::Debug, Fut> {
     // The future
     pub(super) future: UnsafeCell<Option<Fut>>,
 
@@ -45,10 +45,10 @@ pub(super) struct Task<K: Hash + Eq + Clone, Fut> {
 //
 // The parent (`super`) module is trusted not to access `future`
 // across different threads.
-unsafe impl<K: Hash + Eq + Clone, Fut> Send for Task<K, Fut> {}
-unsafe impl<K: Hash + Eq + Clone, Fut> Sync for Task<K, Fut> {}
+unsafe impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Send for Task<K, Fut> {}
+unsafe impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Sync for Task<K, Fut> {}
 
-impl<K: Hash + Eq + Clone, Fut> ArcWake for Task<K, Fut> {
+impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> ArcWake for Task<K, Fut> {
     fn wake_by_ref(arc_self: &Arc<Self>) {
         let inner = match arc_self.ready_to_run_queue.upgrade() {
             Some(inner) => inner,
@@ -77,7 +77,7 @@ impl<K: Hash + Eq + Clone, Fut> ArcWake for Task<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq + Clone, Fut> Task<K, Fut> {
+impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Task<K, Fut> {
     /// Returns a waker reference for this task without cloning the Arc.
     pub(super) fn waker_ref(this: &Arc<Self>) -> WakerRef<'_> {
         waker_ref(this)
@@ -108,7 +108,7 @@ impl<K: Hash + Eq + Clone, Fut> Task<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq + Clone, Fut> Drop for Task<K, Fut> {
+impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Drop for Task<K, Fut> {
     fn drop(&mut self) {
         // Since `Task<K, Fut>` is sent across all threads for any lifetime,
         // regardless of `Fut`, we, to guarantee memory safety, can't actually
@@ -120,7 +120,9 @@ impl<K: Hash + Eq + Clone, Fut> Drop for Task<K, Fut> {
         // a bug in that logic.
         unsafe {
             if (*self.future.get()).is_some() {
-                abort("future still here when dropping");
+                let key = format!("future still here when dropping {:?}", self.key);
+                abort(&key);
+                // abort("future still here when dropping");
             }
         }
     }

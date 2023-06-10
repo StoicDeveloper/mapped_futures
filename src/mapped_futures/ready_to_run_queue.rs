@@ -9,13 +9,13 @@ use core::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
 use super::abort::abort;
 use super::task::Task;
 
-pub(super) enum Dequeue<K: Hash + Eq + Clone, Fut> {
+pub(super) enum Dequeue<K: Hash + Eq + Clone + std::fmt::Debug, Fut> {
     Data(*const Task<K, Fut>),
     Empty,
     Inconsistent,
 }
 
-pub(super) struct ReadyToRunQueue<K: Hash + Eq + Clone, Fut> {
+pub(super) struct ReadyToRunQueue<K: Hash + Eq + Clone + std::fmt::Debug, Fut> {
     // The waker of the task using `MappedFutures`.
     pub(super) waker: AtomicWaker,
 
@@ -27,7 +27,7 @@ pub(super) struct ReadyToRunQueue<K: Hash + Eq + Clone, Fut> {
 
 /// An MPSC queue into which the tasks containing the futures are inserted
 /// whenever the future inside is scheduled for polling.
-impl<K: Hash + Eq + Clone, Fut> ReadyToRunQueue<K, Fut> {
+impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> ReadyToRunQueue<K, Fut> {
     /// The enqueue function from the 1024cores intrusive MPSC queue algorithm.
     pub(super) fn enqueue(&self, task: *const Task<K, Fut>) {
         unsafe {
@@ -109,7 +109,7 @@ impl<K: Hash + Eq + Clone, Fut> ReadyToRunQueue<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq + Clone, Fut> Drop for ReadyToRunQueue<K, Fut> {
+impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Drop for ReadyToRunQueue<K, Fut> {
     fn drop(&mut self) {
         // Once we're in the destructor for `Inner<Fut>` we need to clear out
         // the ready to run queue of tasks if there's anything left in there.
