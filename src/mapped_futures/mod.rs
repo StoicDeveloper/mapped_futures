@@ -1,7 +1,4 @@
-//! An unbounded set of futures.
-//!
-//! This module is only available when the `std` or `alloc` feature of this
-//! library is activated, and it is activated by default.
+//! An unbounded map of futures.
 
 use crate::task::AtomicWaker;
 use alloc::sync::{Arc, Weak};
@@ -32,10 +29,7 @@ use self::task::Task;
 mod ready_to_run_queue;
 use self::ready_to_run_queue::{Dequeue, ReadyToRunQueue};
 
-/// A set of futures which may complete in any order.
-///
-/// See [`FuturesOrdered`](crate::stream::FuturesOrdered) for a version of this
-/// type that preserves a FIFO order.
+/// A map of futures which may complete in any order.
 ///
 /// This structure is optimized to manage a large number of futures.
 /// Futures managed by [`MappedFutures`] will only be polled when they
@@ -44,7 +38,7 @@ use self::ready_to_run_queue::{Dequeue, ReadyToRunQueue};
 ///
 /// [`MappedFutures`] can be filled by [`collect`](Iterator::collect)ing an
 /// iterator of futures into a [`MappedFutures`], or by
-/// [`push`](MappedFutures::push)ing futures onto an existing
+/// [`insert`](MappedFutures::insert)ing futures onto an existing
 /// [`MappedFutures`]. When new futures are added,
 /// [`poll_next`](Stream::poll_next) must be called in order to begin receiving
 /// wake-ups for new futures.
@@ -52,9 +46,6 @@ use self::ready_to_run_queue::{Dequeue, ReadyToRunQueue};
 /// Note that you can create a ready-made [`MappedFutures`] via the
 /// [`collect`](Iterator::collect) method, or you can start with an empty set
 /// with the [`MappedFutures::new`] constructor.
-///
-/// This type is only available when the `std` or `alloc` feature of this
-/// library is activated, and it is activated by default.
 #[must_use = "streams do nothing unless polled"]
 pub struct MappedFutures<K: Hash + Eq + Clone + std::fmt::Debug, Fut> {
     hash_map: HashMap<K, AtomicPtr<Task<K, Fut>>>,
@@ -182,44 +173,45 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
         self.ready_to_run_queue.enqueue(ptr);
     }
 
-    // Removes and drops the mapped future. Cannot return the future, because this module may have
-    // previously used its reference to call Pin::new_unchecked(). Unpinning it here would create
-    // undefined behaviour.
+    /// Remove a future from the set, dropping it.
+    ///
+    /// Removes and drops the mapped future. Cannot return the future, because this module may have
+    /// previously used its reference to call Pin::new_unchecked(). Returning it unpinned here would create
+    /// undefined behaviour. Returns `true` if a future was removed.
     pub fn remove(&mut self, key: &K) -> bool {
-        // TODO: BUGS
-        // at one point, appeared that the removal only reordered the future. Awaiting next still
-        // gave the key of the removed task
-        // at another point, the removal appeared to simply fail, with the future still appearing
-        // in the order that would have been expected had remove() not been called
         if let Some(mut task) = self.hash_map.remove(key) {
             unsafe {
                 if let Some(fut) = (*(**task.get_mut()).future.get()).take() {
                     self.unlink(*(task.get_mut()));
-                    // self.unlink(task);
-                    println!("Unlinked task with key {:?}", key);
                     return true;
                 }
-                println!("Task with key {:?} has no future", key);
             }
         }
-        println!("No task found with key {:?}", key);
         false
     }
+
+    /// Remove a future from the set and return it.
+    ///
+    /// Removes and returns the mapped future. The caller must guarantee that the future was
+    /// inserted pinned, such as with Box::pin(), or else the move will create undefined behaviour.
     pub unsafe fn remove_pinned(&mut self, key: &K) -> Option<Fut> {
         if let Some(mut task) = self.hash_map.remove(key) {
             unsafe {
-                let fut_opt = std::ptr::read((**task.get_mut()).future.get());
-                if fut_opt.is_some() {
+                if let Some(fut) = (*(**task.get_mut()).future.get()).take() {
                     self.unlink(*(task.get_mut()));
-                    return fut_opt;
+                    return Some(fut);
                 }
             }
         }
         None
     }
+
+    /// Returns `true` if the map contains a future for the specified key.
     pub fn contains(&mut self, key: &K) -> bool {
         self.hash_map.contains_key(key)
     }
+    
+    /// Get a mutable reference to the mapped future.
     pub fn get_mut(&mut self, key: &K) -> Option<&mut Fut> {
         if let Some(task_ptr) = self.hash_map.get_mut(key) {
             unsafe {
@@ -230,6 +222,8 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> MappedFutures<K, Fut> {
         }
         None
     }
+
+    /// Get a shared reference to the mapped future.
     pub fn get(&mut self, key: &K) -> Option<&Fut> {
         if let Some(task_ptr) = self.hash_map.get_mut(key) {
             unsafe {
@@ -755,9 +749,14 @@ pub mod tests {
     use futures::executor::block_on;
     use futures_timer::Delay;
     use std::time::Duration;
+    use futures::future::LocalBoxFuture;
 
     fn insert_millis(futs: &mut MappedFutures<u32, Delay>, key: u32, millis: u64) {
         futs.insert(key, Delay::new(Duration::from_millis(millis)))
+    }
+
+    fn insert_millis_pinned(futs: &mut MappedFutures<u32, LocalBoxFuture<'static, ()>>, key: u32, millis: u64) {
+        futs.insert(key, Box::pin(Delay::new(Duration::from_millis(millis))))
     }
 
     #[test]
@@ -775,4 +774,34 @@ pub mod tests {
         assert_eq!(block_on(futures.next()), None);
     }
 
+    #[test]
+    fn remove_pinned() {
+        let mut futures = MappedFutures::new();
+        insert_millis_pinned(&mut futures, 1, 50);
+        insert_millis_pinned(&mut futures, 3, 150);
+        insert_millis_pinned(&mut futures, 4, 200);
+
+        assert_eq!(block_on(futures.next()).unwrap().0, 1);
+        assert_eq!(block_on(unsafe {futures.remove_pinned(&3)}.unwrap()), ());
+        insert_millis_pinned(&mut futures, 2, 60);
+        assert_eq!(block_on(futures.next()).unwrap().0, 4);
+        assert_eq!(block_on(futures.next()).unwrap().0, 2);
+        assert_eq!(block_on(futures.next()), None);
+    }
+
+    #[test]
+    fn mutate() {
+        let mut futures = MappedFutures::new();
+        insert_millis(&mut futures, 1, 50);
+        insert_millis(&mut futures, 2, 100);
+        insert_millis(&mut futures, 3, 150);
+        insert_millis(&mut futures, 4, 200);
+
+        assert_eq!(block_on(futures.next()).unwrap().0, 1);
+        futures.get_mut(&3).unwrap().reset(Duration::from_millis(30));
+        assert_eq!(block_on(futures.next()).unwrap().0, 3);
+        assert_eq!(block_on(futures.next()).unwrap().0, 2);
+        assert_eq!(block_on(futures.next()).unwrap().0, 4);
+        assert_eq!(block_on(futures.next()), None);
+    }
 }

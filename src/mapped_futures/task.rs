@@ -120,9 +120,7 @@ impl<K: Hash + Eq + Clone + std::fmt::Debug, Fut> Drop for Task<K, Fut> {
         // a bug in that logic.
         unsafe {
             if (*self.future.get()).is_some() {
-                let key = format!("future still here when dropping {:?}", self.key);
-                abort(&key);
-                // abort("future still here when dropping");
+                abort("future still here when dropping");
             }
         }
     }
