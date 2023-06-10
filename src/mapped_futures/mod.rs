@@ -15,7 +15,7 @@ use core::sync::atomic::{AtomicBool, AtomicPtr};
 use futures_core::future::Future;
 use futures_core::stream::{FusedStream, Stream};
 use futures_core::task::{Context, Poll};
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 mod abort;
 
@@ -24,7 +24,7 @@ mod iter;
 pub use self::iter::{IntoIter, Iter, IterMut, IterPinMut, IterPinRef};
 
 mod task;
-use self::task::Task;
+use self::task::{HashTask, Task};
 
 mod ready_to_run_queue;
 use self::ready_to_run_queue::{Dequeue, ReadyToRunQueue};
@@ -47,16 +47,16 @@ use self::ready_to_run_queue::{Dequeue, ReadyToRunQueue};
 /// [`collect`](Iterator::collect) method, or you can start with an empty set
 /// with the [`MappedFutures::new`] constructor.
 #[must_use = "streams do nothing unless polled"]
-pub struct MappedFutures<K: Hash + Eq + Clone, Fut> {
-    hash_map: HashMap<K, AtomicPtr<Task<K, Fut>>>,
+pub struct MappedFutures<K: Hash + Eq, Fut> {
+    hash_set: HashSet<HashTask<K, Fut>>,
     ready_to_run_queue: Arc<ReadyToRunQueue<K, Fut>>,
     head_all: AtomicPtr<Task<K, Fut>>,
     is_terminated: AtomicBool,
 }
 
-unsafe impl<K: Hash + Eq + Clone, Fut: Send> Send for MappedFutures<K, Fut> {}
-unsafe impl<K: Hash + Eq + Clone, Fut: Sync> Sync for MappedFutures<K, Fut> {}
-impl<K: Hash + Eq + Clone, Fut> Unpin for MappedFutures<K, Fut> {}
+unsafe impl<K: Hash + Eq, Fut: Send> Send for MappedFutures<K, Fut> {}
+unsafe impl<K: Hash + Eq, Fut: Sync> Sync for MappedFutures<K, Fut> {}
+impl<K: Hash + Eq, Fut> Unpin for MappedFutures<K, Fut> {}
 
 // MappedFutures is implemented using two linked lists. One which links all
 // futures managed by a `MappedFutures` and one that tracks futures that have
@@ -83,13 +83,13 @@ impl<K: Hash + Eq + Clone, Fut> Unpin for MappedFutures<K, Fut> {}
 // notification is received, the task will only be inserted into the ready to
 // run queue if it isn't inserted already.
 
-impl<K: Hash + Eq + Clone, Fut> Default for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut> Default for MappedFutures<K, Fut> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
     /// Constructs a new, empty [`MappedFutures`].
     ///
     /// The returned [`MappedFutures`] does not contain any futures.
@@ -105,7 +105,7 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
             queued: AtomicBool::new(true),
             ready_to_run_queue: Weak::new(),
             woken: AtomicBool::new(false),
-            key: None,
+            key: UnsafeCell::new(None),
         });
         let stub_ptr = Arc::as_ptr(&stub);
         let ready_to_run_queue = Arc::new(ReadyToRunQueue {
@@ -116,7 +116,7 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
         });
 
         Self {
-            hash_map: HashMap::new(),
+            hash_set: HashSet::new(),
             head_all: AtomicPtr::new(ptr::null_mut()),
             ready_to_run_queue,
             is_terminated: AtomicBool::new(false),
@@ -154,7 +154,7 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
             queued: AtomicBool::new(true),
             ready_to_run_queue: Arc::downgrade(&self.ready_to_run_queue),
             woken: AtomicBool::new(false),
-            key: Some(key.clone()),
+            key: UnsafeCell::new(Some(key)),
         });
 
         // Reset the `is_terminated` flag if we've previously marked ourselves
@@ -164,7 +164,7 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
         // Right now our task has a strong reference count of 1. We transfer
         // ownership of this reference count to our internal linked list
         // and we'll reclaim ownership through the `unlink` method below.
-        let ptr = self.link(key, task);
+        let ptr = self.link(task);
 
         // We'll need to get the future "into the system" to start tracking it,
         // e.g. getting its wake-up notifications going to us tracking which
@@ -175,10 +175,10 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
 
     /// Remove a future from the set, dropping it.
     pub fn cancel(&mut self, key: &K) -> bool {
-        if let Some(mut task) = self.hash_map.remove(key) {
+        if let Some(task) = self.hash_set.get(key) {
             unsafe {
-                if let Some(_) = (*(**task.get_mut()).future.get()).take() {
-                    self.unlink(*(task.get_mut()));
+                if let Some(_) = (*task.future.get()).take() {
+                    self.unlink(Arc::as_ptr(&task.inner));
                     return true;
                 }
             }
@@ -191,12 +191,11 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
     where
         Fut: Unpin,
     {
-        if let Some(mut task) = self.hash_map.remove(key) {
+        if let Some(task) = self.hash_set.get(key) {
             unsafe {
-                if let Some(fut) = (*(**task.get_mut()).future.get()).take() {
-                    self.unlink(*(task.get_mut()));
-                    return Some(fut);
-                }
+                let fut = (*task.future.get()).take().unwrap();
+                self.unlink(Arc::as_ptr(&task.inner));
+                return Some(fut);
             }
         }
         None
@@ -204,14 +203,14 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
 
     /// Returns `true` if the map contains a future for the specified key.
     pub fn contains(&mut self, key: &K) -> bool {
-        self.hash_map.contains_key(key)
+        self.hash_set.contains(key)
     }
 
     /// Get a pinned mutable reference to the mapped future.
     pub fn get_pin_mut(&mut self, key: &K) -> Option<Pin<&mut Fut>> {
-        if let Some(task_ptr) = self.hash_map.get_mut(key) {
+        if let Some(task_ref) = self.hash_set.get(key) {
             unsafe {
-                if let Some(fut) = &mut *(**task_ptr.get_mut()).future.get() {
+                if let Some(fut) = &mut *task_ref.inner.future.get() {
                     return Some(Pin::new_unchecked(fut));
                 }
             }
@@ -224,9 +223,9 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
     where
         Fut: Unpin,
     {
-        if let Some(task_ptr) = self.hash_map.get_mut(key) {
+        if let Some(task_ref) = self.hash_set.get(key) {
             unsafe {
-                if let Some(fut) = &mut *(**task_ptr.get_mut()).future.get() {
+                if let Some(fut) = &mut *task_ref.inner.future.get() {
                     return Some(fut);
                 }
             }
@@ -239,9 +238,9 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
     where
         Fut: Unpin,
     {
-        if let Some(task_ptr) = self.hash_map.get_mut(key) {
+        if let Some(task_ref) = self.hash_set.get(key) {
             unsafe {
-                if let Some(fut) = &*(**task_ptr.get_mut()).future.get() {
+                if let Some(fut) = &*task_ref.inner.future.get() {
                     return Some(fut);
                 }
             }
@@ -251,9 +250,9 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
 
     /// Get a pinned shared reference to the mapped future.
     pub fn get_pin(&mut self, key: &K) -> Option<Pin<&Fut>> {
-        if let Some(task_ptr) = self.hash_map.get_mut(key) {
+        if let Some(task_ref) = self.hash_set.get(key) {
             unsafe {
-                if let Some(fut) = &*(**task_ptr.get_mut()).future.get() {
+                if let Some(fut) = &*task_ref.future.get() {
                     return Some(Pin::new_unchecked(fut));
                 }
             }
@@ -335,10 +334,6 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
             debug_assert!((*task.prev_all.get()).is_null());
         }
 
-        if let Some(key) = &task.key {
-            self.hash_map.remove(&key);
-        }
-
         // The future is done, try to reset the queued flag. This will prevent
         // `wake` from doing any work in the future
         let prev = task.queued.swap(true, SeqCst);
@@ -351,6 +346,10 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
             // Set to `None` rather than `take()`ing to prevent moving the
             // future.
             *task.future.get() = None;
+            let key = &*task.key.get();
+            if let Some(key) = key {
+                self.hash_set.remove(key);
+            }
         }
 
         // If the queued flag was previously set, then it means that this task
@@ -370,10 +369,16 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
     }
 
     /// Insert a new task into the internal linked list.
-    fn link(&mut self, key: K, task: Arc<Task<K, Fut>>) -> *const Task<K, Fut> {
+    fn link(&mut self, task: Arc<Task<K, Fut>>) -> *const Task<K, Fut> {
         // `next_all` should already be reset to the pending state before this
         // function is called.
         debug_assert_eq!(task.next_all.load(Relaxed), self.pending_next_all());
+
+        let hash_task = HashTask {
+            inner: task.clone(),
+        };
+        self.hash_set.insert(hash_task);
+
         let ptr = Arc::into_raw(task);
 
         // Atomically swap out the old head node to get the node that should be
@@ -381,8 +386,6 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
         let next = self.head_all.swap(ptr as *mut _, AcqRel);
 
         unsafe {
-            let val_ptr = AtomicPtr::new(ptr as *mut _);
-            self.hash_map.insert(key, val_ptr);
             // Store the new list length in the new node.
             let new_len = if next.is_null() {
                 1
@@ -419,13 +422,15 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
         debug_assert!(!head.is_null());
         let new_len = *(*head).len_all.get() - 1;
 
+        if let Some(key) = (*task).key() {
+            self.hash_set.remove(key);
+        }
+
         let task = Arc::from_raw(task);
         let next = task.next_all.load(Relaxed);
         let prev = *task.prev_all.get();
         task.next_all.store(self.pending_next_all(), Relaxed);
         *task.prev_all.get() = ptr::null_mut();
-
-        self.hash_map.remove(&task.key.as_ref().unwrap());
 
         if !next.is_null() {
             *(*next).prev_all.get() = prev;
@@ -476,7 +481,7 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq + Clone, Fut: Future> Stream for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut: Future> Stream for MappedFutures<K, Fut> {
     type Item = (K, Fut::Output);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -569,12 +574,12 @@ impl<K: Hash + Eq + Clone, Fut: Future> Stream for MappedFutures<K, Fut> {
             // * We unlink the task from our internal queue to preemptively
             //   assume it'll panic, in which case we'll want to discard it
             //   regardless.
-            struct Bomb<'a, K: Hash + Eq + Clone, Fut> {
+            struct Bomb<'a, K: Hash + Eq, Fut> {
                 queue: &'a mut MappedFutures<K, Fut>,
                 task: Option<Arc<Task<K, Fut>>>,
             }
 
-            impl<K: Hash + Eq + Clone, Fut> Drop for Bomb<'_, K, Fut> {
+            impl<K: Hash + Eq, Fut> Drop for Bomb<'_, K, Fut> {
                 fn drop(&mut self) {
                     if let Some(task) = self.task.take() {
                         self.queue.release_task(task);
@@ -582,7 +587,6 @@ impl<K: Hash + Eq + Clone, Fut: Future> Stream for MappedFutures<K, Fut> {
                 }
             }
 
-            let key: Option<K> = task.key.clone();
             let mut bomb = Bomb {
                 task: Some(task),
                 queue: &mut *self,
@@ -620,7 +624,7 @@ impl<K: Hash + Eq + Clone, Fut: Future> Stream for MappedFutures<K, Fut> {
                     // If the future was awoken during polling, we assume
                     // the future wanted to explicitly yield.
                     yielded += task.woken.load(Relaxed) as usize;
-                    bomb.queue.link(task.key.clone().unwrap(), task);
+                    bomb.queue.link(task);
 
                     // If a future yields, we respect it and yield here.
                     // If all futures have been polled, we also yield here to
@@ -634,8 +638,11 @@ impl<K: Hash + Eq + Clone, Fut: Future> Stream for MappedFutures<K, Fut> {
                     continue;
                 }
                 Poll::Ready(output) => {
-                    bomb.queue.hash_map.remove(&key.clone().unwrap());
-                    return Poll::Ready(Some((key.unwrap(), output)));
+                    // Need to get the key, and remove the task from the hash_set
+                    // let key = unsafe { (*bomb.task.as_ref().unwrap().key.get()).take().unwrap() };
+                    // bomb.queue.hash_set.remove(&key); // TODO: The bomb drop already contains this
+                    // logic
+                    return Poll::Ready(Some((bomb.task.as_ref().unwrap().take_key(), output)));
                 }
             }
         }
@@ -647,17 +654,17 @@ impl<K: Hash + Eq + Clone, Fut: Future> Stream for MappedFutures<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq + Clone, Fut> Debug for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut> Debug for MappedFutures<K, Fut> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "MappedFutures {{ ... }}")
     }
 }
 
-impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
     /// Clears the set, removing all futures.
     pub fn clear(&mut self) {
         self.clear_head_all();
-        self.hash_map.clear();
+        self.hash_set.clear();
 
         // we just cleared all the tasks, and we have &mut self, so this is safe.
         unsafe { self.ready_to_run_queue.clear() };
@@ -674,7 +681,7 @@ impl<K: Hash + Eq + Clone, Fut> MappedFutures<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq + Clone, Fut> Drop for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut> Drop for MappedFutures<K, Fut> {
     fn drop(&mut self) {
         // When a `MappedFutures` is dropped we want to drop all futures
         // associated with it. At the same time though there may be tons of
@@ -697,7 +704,7 @@ impl<K: Hash + Eq + Clone, Fut> Drop for MappedFutures<K, Fut> {
     }
 }
 
-impl<'a, K: Hash + Eq + Clone, Fut: Unpin> IntoIterator for &'a MappedFutures<K, Fut> {
+impl<'a, K: Hash + Eq, Fut: Unpin> IntoIterator for &'a MappedFutures<K, Fut> {
     type Item = &'a Fut;
     type IntoIter = Iter<'a, K, Fut>;
 
@@ -706,7 +713,7 @@ impl<'a, K: Hash + Eq + Clone, Fut: Unpin> IntoIterator for &'a MappedFutures<K,
     }
 }
 
-impl<'a, K: Hash + Eq + Clone, Fut: Unpin> IntoIterator for &'a mut MappedFutures<K, Fut> {
+impl<'a, K: Hash + Eq, Fut: Unpin> IntoIterator for &'a mut MappedFutures<K, Fut> {
     type Item = &'a mut Fut;
     type IntoIter = IterMut<'a, K, Fut>;
 
@@ -715,7 +722,7 @@ impl<'a, K: Hash + Eq + Clone, Fut: Unpin> IntoIterator for &'a mut MappedFuture
     }
 }
 
-impl<K: Hash + Eq + Clone, Fut: Unpin> IntoIterator for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut: Unpin> IntoIterator for MappedFutures<K, Fut> {
     type Item = Fut;
     type IntoIter = IntoIter<K, Fut>;
 
@@ -733,7 +740,7 @@ impl<K: Hash + Eq + Clone, Fut: Unpin> IntoIterator for MappedFutures<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq + Clone, Fut> FromIterator<(K, Fut)> for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut> FromIterator<(K, Fut)> for MappedFutures<K, Fut> {
     fn from_iter<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = (K, Fut)>,
@@ -746,13 +753,13 @@ impl<K: Hash + Eq + Clone, Fut> FromIterator<(K, Fut)> for MappedFutures<K, Fut>
     }
 }
 
-impl<K: Hash + Eq + Clone, Fut: Future> FusedStream for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut: Future> FusedStream for MappedFutures<K, Fut> {
     fn is_terminated(&self) -> bool {
         self.is_terminated.load(Relaxed)
     }
 }
 
-impl<K: Hash + Eq + Clone, Fut> Extend<(K, Fut)> for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut> Extend<(K, Fut)> for MappedFutures<K, Fut> {
     fn extend<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = (K, Fut)>,
