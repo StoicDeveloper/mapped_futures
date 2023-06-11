@@ -5,37 +5,40 @@ use core::marker::PhantomData;
 use core::pin::Pin;
 use core::ptr;
 use core::sync::atomic::Ordering::Relaxed;
+use std::hash::BuildHasher;
 
 /// Mutable iterator over all futures in the unordered set.
 #[derive(Debug)]
-pub struct IterPinMut<'a, K: Hash + Eq, Fut> {
+pub struct IterPinMut<'a, K: Hash + Eq, Fut, S: BuildHasher> {
     pub(super) task: *const Task<K, Fut>,
     pub(super) len: usize,
-    pub(super) _marker: PhantomData<&'a mut MappedFutures<K, Fut>>,
+    pub(super) _marker: PhantomData<&'a mut MappedFutures<K, Fut, S>>,
 }
 
 /// Mutable iterator over all futures in the unordered set.
 #[derive(Debug)]
-pub struct IterMut<'a, K: Hash + Eq, Fut: Unpin>(pub(super) IterPinMut<'a, K, Fut>);
+pub struct IterMut<'a, K: Hash + Eq, Fut: Unpin, S: BuildHasher>(
+    pub(super) IterPinMut<'a, K, Fut, S>,
+);
 
 /// Immutable iterator over all futures in the unordered set.
 #[derive(Debug)]
-pub struct IterPinRef<'a, K: Hash + Eq, Fut> {
+pub struct IterPinRef<'a, K: Hash + Eq, Fut, S: BuildHasher> {
     pub(super) task: *const Task<K, Fut>,
     pub(super) len: usize,
     pub(super) pending_next_all: *mut Task<K, Fut>,
-    pub(super) _marker: PhantomData<&'a MappedFutures<K, Fut>>,
+    pub(super) _marker: PhantomData<&'a MappedFutures<K, Fut, S>>,
 }
 
 /// Immutable iterator over all the futures in the unordered set.
 #[derive(Debug)]
-pub struct Iter<'a, K: Hash + Eq, Fut: Unpin>(pub(super) IterPinRef<'a, K, Fut>);
+pub struct Iter<'a, K: Hash + Eq, Fut: Unpin, S: BuildHasher>(pub(super) IterPinRef<'a, K, Fut, S>);
 
 /// Owned iterator over all futures in the unordered set.
 #[derive(Debug)]
-pub struct IntoIter<K: Hash + Eq, Fut: Unpin> {
+pub struct IntoIter<K: Hash + Eq, Fut: Unpin, S: BuildHasher> {
     pub(super) len: usize,
-    pub(super) inner: MappedFutures<K, Fut>,
+    pub(super) inner: MappedFutures<K, Fut, S>,
 }
 
 /// Immutable iterator over the keys in the mapping.
@@ -44,7 +47,7 @@ pub struct Keys<'a, K: Hash + Eq, Fut> {
     pub(super) inner: std::collections::hash_set::Iter<'a, HashTask<K, Fut>>,
 }
 
-impl<K: Hash + Eq, Fut: Unpin> Iterator for IntoIter<K, Fut> {
+impl<K: Hash + Eq, Fut: Unpin, S: BuildHasher> Iterator for IntoIter<K, Fut, S> {
     type Item = Fut;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -79,9 +82,9 @@ impl<K: Hash + Eq, Fut: Unpin> Iterator for IntoIter<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut: Unpin> ExactSizeIterator for IntoIter<K, Fut> {}
+impl<K: Hash + Eq, Fut: Unpin, S: BuildHasher> ExactSizeIterator for IntoIter<K, Fut, S> {}
 
-impl<'a, K: Hash + Eq, Fut> Iterator for IterPinMut<'a, K, Fut> {
+impl<'a, K: Hash + Eq, Fut, S: BuildHasher> Iterator for IterPinMut<'a, K, Fut, S> {
     type Item = Pin<&'a mut Fut>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -108,9 +111,9 @@ impl<'a, K: Hash + Eq, Fut> Iterator for IterPinMut<'a, K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut> ExactSizeIterator for IterPinMut<'_, K, Fut> {}
+impl<K: Hash + Eq, Fut, S: BuildHasher> ExactSizeIterator for IterPinMut<'_, K, Fut, S> {}
 
-impl<'a, K: Hash + Eq, Fut: Unpin> Iterator for IterMut<'a, K, Fut> {
+impl<'a, K: Hash + Eq, Fut: Unpin, S: BuildHasher> Iterator for IterMut<'a, K, Fut, S> {
     type Item = &'a mut Fut;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -122,9 +125,9 @@ impl<'a, K: Hash + Eq, Fut: Unpin> Iterator for IterMut<'a, K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut: Unpin> ExactSizeIterator for IterMut<'_, K, Fut> {}
+impl<K: Hash + Eq, Fut: Unpin, S: BuildHasher> ExactSizeIterator for IterMut<'_, K, Fut, S> {}
 
-impl<'a, K: Hash + Eq, Fut> Iterator for IterPinRef<'a, K, Fut> {
+impl<'a, K: Hash + Eq, Fut, S: BuildHasher> Iterator for IterPinRef<'a, K, Fut, S> {
     type Item = Pin<&'a Fut>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -151,9 +154,9 @@ impl<'a, K: Hash + Eq, Fut> Iterator for IterPinRef<'a, K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut> ExactSizeIterator for IterPinRef<'_, K, Fut> {}
+impl<K: Hash + Eq, Fut, S: BuildHasher> ExactSizeIterator for IterPinRef<'_, K, Fut, S> {}
 
-impl<'a, K: Hash + Eq, Fut: Unpin> Iterator for Iter<'a, K, Fut> {
+impl<'a, K: Hash + Eq, Fut: Unpin, S: BuildHasher> Iterator for Iter<'a, K, Fut, S> {
     type Item = &'a Fut;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -165,7 +168,7 @@ impl<'a, K: Hash + Eq, Fut: Unpin> Iterator for Iter<'a, K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut: Unpin> ExactSizeIterator for Iter<'_, K, Fut> {}
+impl<K: Hash + Eq, Fut: Unpin, S: BuildHasher> ExactSizeIterator for Iter<'_, K, Fut, S> {}
 
 impl<K: Hash + Eq, Fut: Unpin> ExactSizeIterator for Keys<'_, K, Fut> {}
 
@@ -179,14 +182,14 @@ impl<'a, K: Hash + Eq, Fut> Iterator for Keys<'a, K, Fut> {
 
 // SAFETY: we do nothing thread-local and there is no interior mutability,
 // so the usual structural `Send`/`Sync` apply.
-unsafe impl<K: Hash + Eq, Fut: Send> Send for IterPinRef<'_, K, Fut> {}
-unsafe impl<K: Hash + Eq, Fut: Sync> Sync for IterPinRef<'_, K, Fut> {}
+unsafe impl<K: Hash + Eq, Fut: Send, S: BuildHasher> Send for IterPinRef<'_, K, Fut, S> {}
+unsafe impl<K: Hash + Eq, Fut: Sync, S: BuildHasher> Sync for IterPinRef<'_, K, Fut, S> {}
 
-unsafe impl<K: Hash + Eq, Fut: Send> Send for IterPinMut<'_, K, Fut> {}
-unsafe impl<K: Hash + Eq, Fut: Sync> Sync for IterPinMut<'_, K, Fut> {}
+unsafe impl<K: Hash + Eq, Fut: Send, S: BuildHasher> Send for IterPinMut<'_, K, Fut, S> {}
+unsafe impl<K: Hash + Eq, Fut: Sync, S: BuildHasher> Sync for IterPinMut<'_, K, Fut, S> {}
 
-unsafe impl<K: Hash + Eq, Fut: Send + Unpin> Send for IntoIter<K, Fut> {}
-unsafe impl<K: Hash + Eq, Fut: Sync + Unpin> Sync for IntoIter<K, Fut> {}
+unsafe impl<K: Hash + Eq, Fut: Send + Unpin, S: BuildHasher> Send for IntoIter<K, Fut, S> {}
+unsafe impl<K: Hash + Eq, Fut: Sync + Unpin, S: BuildHasher> Sync for IntoIter<K, Fut, S> {}
 
 unsafe impl<K: Hash + Eq, Fut: Send + Unpin> Send for Keys<'_, K, Fut> {}
 unsafe impl<K: Hash + Eq, Fut: Sync + Unpin> Sync for Keys<'_, K, Fut> {}

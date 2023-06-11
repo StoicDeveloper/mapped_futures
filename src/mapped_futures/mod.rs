@@ -15,7 +15,9 @@ use core::sync::atomic::{AtomicBool, AtomicPtr};
 use futures_core::future::Future;
 use futures_core::stream::{FusedStream, Stream};
 use futures_core::task::{Context, Poll};
+use std::collections::hash_map::RandomState;
 use std::collections::HashSet;
+use std::hash::BuildHasher;
 
 mod abort;
 
@@ -48,16 +50,19 @@ use self::ready_to_run_queue::{Dequeue, ReadyToRunQueue};
 /// [`collect`](Iterator::collect) method, or you can start with an empty set
 /// with the [`MappedFutures::new`] constructor.
 #[must_use = "streams do nothing unless polled"]
-pub struct MappedFutures<K: Hash + Eq, Fut> {
-    hash_set: HashSet<HashTask<K, Fut>>,
+pub struct MappedFutures<K: Hash + Eq, Fut, S = RandomState>
+where
+    S: BuildHasher,
+{
+    hash_set: HashSet<HashTask<K, Fut>, S>,
     ready_to_run_queue: Arc<ReadyToRunQueue<K, Fut>>,
     head_all: AtomicPtr<Task<K, Fut>>,
     is_terminated: AtomicBool,
 }
 
-unsafe impl<K: Hash + Eq, Fut: Send> Send for MappedFutures<K, Fut> {}
-unsafe impl<K: Hash + Eq, Fut: Sync> Sync for MappedFutures<K, Fut> {}
-impl<K: Hash + Eq, Fut> Unpin for MappedFutures<K, Fut> {}
+unsafe impl<K: Hash + Eq, Fut: Send, S: BuildHasher> Send for MappedFutures<K, Fut, S> {}
+unsafe impl<K: Hash + Eq, Fut: Sync, S: BuildHasher> Sync for MappedFutures<K, Fut, S> {}
+impl<K: Hash + Eq, Fut, S: BuildHasher> Unpin for MappedFutures<K, Fut, S> {}
 
 // MappedFutures is implemented using two linked lists. One which links all
 // futures managed by a `MappedFutures` and one that tracks futures that have
@@ -84,19 +89,18 @@ impl<K: Hash + Eq, Fut> Unpin for MappedFutures<K, Fut> {}
 // notification is received, the task will only be inserted into the ready to
 // run queue if it isn't inserted already.
 
-impl<K: Hash + Eq, Fut> Default for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut> Default for MappedFutures<K, Fut, RandomState> {
     fn default() -> Self {
         Self::new()
     }
 }
-
-impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut> MappedFutures<K, Fut, RandomState> {
     /// Constructs a new, empty [`MappedFutures`].
     ///
     /// The returned [`MappedFutures`] does not contain any futures.
     /// In this state, [`MappedFutures::poll_next`](Stream::poll_next) will
     /// return [`Poll::Ready(None)`](Poll::Ready).
-    pub fn new() -> Self {
+    pub fn new() -> MappedFutures<K, Fut, RandomState> {
         let stub = Arc::new(Task {
             future: UnsafeCell::new(None),
             next_all: AtomicPtr::new(ptr::null_mut()),
@@ -123,7 +127,9 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
             is_terminated: AtomicBool::new(false),
         }
     }
+}
 
+impl<K: Hash + Eq, Fut, S: BuildHasher> MappedFutures<K, Fut, S> {
     /// Returns the number of futures contained in the set.
     ///
     /// This represents the total number of in-flight futures.
@@ -137,6 +143,40 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
         // Relaxed ordering can be used here since we don't need to read from
         // the head pointer, only check whether it is null.
         self.head_all.load(Relaxed).is_null()
+    }
+
+    /// Create MappedFutures with the specified BuildHasher
+    pub fn with_hasher(hasher: S) -> MappedFutures<K, Fut, S> {
+        let stub = Arc::new(Task {
+            future: UnsafeCell::new(None),
+            next_all: AtomicPtr::new(ptr::null_mut()),
+            prev_all: UnsafeCell::new(ptr::null()),
+            len_all: UnsafeCell::new(0),
+            next_ready_to_run: AtomicPtr::new(ptr::null_mut()),
+            queued: AtomicBool::new(true),
+            ready_to_run_queue: Weak::new(),
+            woken: AtomicBool::new(false),
+            key: UnsafeCell::new(None),
+        });
+        let stub_ptr = Arc::as_ptr(&stub);
+        let ready_to_run_queue = Arc::new(ReadyToRunQueue {
+            waker: AtomicWaker::new(),
+            head: AtomicPtr::new(stub_ptr as *mut _),
+            tail: UnsafeCell::new(stub_ptr),
+            stub,
+        });
+
+        Self {
+            hash_set: HashSet::with_hasher(hasher),
+            head_all: AtomicPtr::new(ptr::null_mut()),
+            ready_to_run_queue,
+            is_terminated: AtomicBool::new(false),
+        }
+    }
+
+    // Gets the BuildHasher associated with these MappedFutures.
+    pub fn hasher(&self) -> &S {
+        self.hash_set.hasher()
     }
 
     /// Insert a future into the set.
@@ -316,7 +356,7 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
     }
 
     /// Returns an iterator that allows inspecting each future in the set.
-    pub fn iter(&self) -> Iter<'_, K, Fut>
+    pub fn iter(&self) -> Iter<'_, K, Fut, S>
     where
         Fut: Unpin,
     {
@@ -324,7 +364,7 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
     }
 
     /// Returns an iterator that allows inspecting each future in the set.
-    pub fn iter_pin_ref(self: Pin<&Self>) -> IterPinRef<'_, K, Fut> {
+    pub fn iter_pin_ref(self: Pin<&Self>) -> IterPinRef<'_, K, Fut, S> {
         let (task, len) = self.atomic_load_head_and_len_all();
         let pending_next_all = self.pending_next_all();
 
@@ -337,7 +377,7 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
     }
 
     /// Returns an iterator that allows modifying each future in the set.
-    pub fn iter_mut(&mut self) -> IterMut<'_, K, Fut>
+    pub fn iter_mut(&mut self) -> IterMut<'_, K, Fut, S>
     where
         Fut: Unpin,
     {
@@ -345,7 +385,7 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
     }
 
     /// Returns an iterator that allows modifying each future in the set.
-    pub fn iter_pin_mut(mut self: Pin<&mut Self>) -> IterPinMut<'_, K, Fut> {
+    pub fn iter_pin_mut(mut self: Pin<&mut Self>) -> IterPinMut<'_, K, Fut, S> {
         // `head_all` can be accessed directly and we don't need to spin on
         // `Task::next_all` since we have exclusive access to the set.
         let task = *self.head_all.get_mut();
@@ -537,7 +577,7 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut: Future> Stream for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut: Future, S: BuildHasher> Stream for MappedFutures<K, Fut, S> {
     type Item = (K, Fut::Output);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -630,12 +670,12 @@ impl<K: Hash + Eq, Fut: Future> Stream for MappedFutures<K, Fut> {
             // * We unlink the task from our internal queue to preemptively
             //   assume it'll panic, in which case we'll want to discard it
             //   regardless.
-            struct Bomb<'a, K: Hash + Eq, Fut> {
-                queue: &'a mut MappedFutures<K, Fut>,
+            struct Bomb<'a, K: Hash + Eq, Fut, S: BuildHasher> {
+                queue: &'a mut MappedFutures<K, Fut, S>,
                 task: Option<Arc<Task<K, Fut>>>,
             }
 
-            impl<K: Hash + Eq, Fut> Drop for Bomb<'_, K, Fut> {
+            impl<K: Hash + Eq, Fut, S: BuildHasher> Drop for Bomb<'_, K, Fut, S> {
                 fn drop(&mut self) {
                     if let Some(task) = self.task.take() {
                         self.queue.release_task(task);
@@ -706,13 +746,13 @@ impl<K: Hash + Eq, Fut: Future> Stream for MappedFutures<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut> Debug for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut, S: BuildHasher> Debug for MappedFutures<K, Fut, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "MappedFutures {{ ... }}")
     }
 }
 
-impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut, S: BuildHasher> MappedFutures<K, Fut, S> {
     /// Clears the set, removing all futures.
     pub fn clear(&mut self) {
         self.clear_head_all();
@@ -733,7 +773,7 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut> Drop for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut, S: BuildHasher> Drop for MappedFutures<K, Fut, S> {
     fn drop(&mut self) {
         // When a `MappedFutures` is dropped we want to drop all futures
         // associated with it. At the same time though there may be tons of
@@ -756,27 +796,29 @@ impl<K: Hash + Eq, Fut> Drop for MappedFutures<K, Fut> {
     }
 }
 
-impl<'a, K: Hash + Eq, Fut: Unpin> IntoIterator for &'a MappedFutures<K, Fut> {
+impl<'a, K: Hash + Eq, Fut: Unpin, S: BuildHasher> IntoIterator for &'a MappedFutures<K, Fut, S> {
     type Item = &'a Fut;
-    type IntoIter = Iter<'a, K, Fut>;
+    type IntoIter = Iter<'a, K, Fut, S>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
 
-impl<'a, K: Hash + Eq, Fut: Unpin> IntoIterator for &'a mut MappedFutures<K, Fut> {
+impl<'a, K: Hash + Eq, Fut: Unpin, S: BuildHasher> IntoIterator
+    for &'a mut MappedFutures<K, Fut, S>
+{
     type Item = &'a mut Fut;
-    type IntoIter = IterMut<'a, K, Fut>;
+    type IntoIter = IterMut<'a, K, Fut, S>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter_mut()
     }
 }
 
-impl<K: Hash + Eq, Fut: Unpin> IntoIterator for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut: Unpin, S: BuildHasher> IntoIterator for MappedFutures<K, Fut, S> {
     type Item = Fut;
-    type IntoIter = IntoIter<K, Fut>;
+    type IntoIter = IntoIter<K, Fut, S>;
 
     fn into_iter(mut self) -> Self::IntoIter {
         // `head_all` can be accessed directly and we don't need to spin on
@@ -792,7 +834,7 @@ impl<K: Hash + Eq, Fut: Unpin> IntoIterator for MappedFutures<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut> FromIterator<(K, Fut)> for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut> FromIterator<(K, Fut)> for MappedFutures<K, Fut, RandomState> {
     fn from_iter<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = (K, Fut)>,
@@ -805,13 +847,13 @@ impl<K: Hash + Eq, Fut> FromIterator<(K, Fut)> for MappedFutures<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut: Future> FusedStream for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut: Future, S: BuildHasher> FusedStream for MappedFutures<K, Fut, S> {
     fn is_terminated(&self) -> bool {
         self.is_terminated.load(Relaxed)
     }
 }
 
-impl<K: Hash + Eq, Fut> Extend<(K, Fut)> for MappedFutures<K, Fut> {
+impl<K: Hash + Eq, Fut, S: BuildHasher> Extend<(K, Fut)> for MappedFutures<K, Fut, S> {
     fn extend<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = (K, Fut)>,
