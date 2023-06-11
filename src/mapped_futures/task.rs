@@ -47,6 +47,15 @@ pub(super) struct HashTask<K: Hash + Eq, Fut> {
     pub(super) inner: Arc<Task<K, Fut>>,
 }
 
+impl<K: Hash + Eq, Fut> HashTask<K, Fut> {
+    fn key(&self) -> Option<&K> {
+        Task::key(&*self)
+    }
+    pub(super) fn key_unwrap(&self) -> &K {
+        unsafe { (&*self.key.get()).as_ref().unwrap() }
+    }
+}
+
 impl<K: Hash + Eq, Fut> Deref for HashTask<K, Fut> {
     type Target = Task<K, Fut>;
 
@@ -75,6 +84,8 @@ impl<K: Hash + Eq, Fut> PartialEq for HashTask<K, Fut> {
     }
 }
 impl<K: Hash + Eq, Fut> Eq for HashTask<K, Fut> {}
+unsafe impl<K: Hash + Eq, Fut> Send for HashTask<K, Fut> {}
+unsafe impl<K: Hash + Eq, Fut> Sync for HashTask<K, Fut> {}
 
 // `Task` can be sent across threads safely because it ensures that
 // the underlying `Fut` type isn't touched from any of its methods.

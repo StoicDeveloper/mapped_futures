@@ -1,4 +1,4 @@
-use super::task::Task;
+use super::task::{HashTask, Task};
 use super::MappedFutures;
 use core::hash::Hash;
 use core::marker::PhantomData;
@@ -161,6 +161,22 @@ impl<'a, K: Hash + Eq, Fut: Unpin> Iterator for Iter<'a, K, Fut> {
 
 impl<K: Hash + Eq, Fut: Unpin> ExactSizeIterator for Iter<'_, K, Fut> {}
 
+pub struct Keys<'a, K: Hash + Eq, Fut> {
+    pub(super) inner: std::iter::Map<
+        std::collections::hash_set::Iter<'a, HashTask<K, Fut>>,
+        Box<dyn FnMut(&'a HashTask<K, Fut>) -> &'a K>,
+    >,
+}
+impl<K: Hash + Eq, Fut: Unpin> ExactSizeIterator for Keys<'_, K, Fut> {}
+
+impl<'a, K: Hash + Eq, Fut> Iterator for Keys<'a, K, Fut> {
+    type Item = &'a K;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
 // SAFETY: we do nothing thread-local and there is no interior mutability,
 // so the usual structural `Send`/`Sync` apply.
 unsafe impl<K: Hash + Eq, Fut: Send> Send for IterPinRef<'_, K, Fut> {}
@@ -171,3 +187,6 @@ unsafe impl<K: Hash + Eq, Fut: Sync> Sync for IterPinMut<'_, K, Fut> {}
 
 unsafe impl<K: Hash + Eq, Fut: Send + Unpin> Send for IntoIter<K, Fut> {}
 unsafe impl<K: Hash + Eq, Fut: Sync + Unpin> Sync for IntoIter<K, Fut> {}
+
+unsafe impl<K: Hash + Eq, Fut: Send + Unpin> Send for Keys<'_, K, Fut> {}
+unsafe impl<K: Hash + Eq, Fut: Sync + Unpin> Sync for Keys<'_, K, Fut> {}

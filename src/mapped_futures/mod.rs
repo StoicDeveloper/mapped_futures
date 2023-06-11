@@ -20,6 +20,7 @@ use std::collections::HashSet;
 mod abort;
 
 mod iter;
+use self::iter::Keys;
 #[allow(unreachable_pub)] // https://github.com/rust-lang/rust/issues/102352
 pub use self::iter::{IntoIter, Iter, IterMut, IterPinMut, IterPinRef};
 
@@ -138,13 +139,17 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
         self.head_all.load(Relaxed).is_null()
     }
 
-    /// Push a future into the set.
+    /// Insert a future into the set.
     ///
     /// This method adds the given future to the set. This method will not
     /// call [`poll`](core::future::Future::poll) on the submitted future. The caller must
     /// ensure that [`MappedFutures::poll_next`](Stream::poll_next) is called
     /// in order to receive wake-up notifications for the given future.
-    pub fn insert(&mut self, key: K, future: Fut) {
+    ///
+    /// This method will remove and drop a future that is already mapped to the provided key.
+    /// Returns true if another future was not removed to make room for the provided future.
+    pub fn insert(&mut self, key: K, future: Fut) -> bool {
+        let replacing = self.cancel(&key);
         let task = Arc::new(Task {
             future: UnsafeCell::new(Some(future)),
             next_all: AtomicPtr::new(self.pending_next_all()),
@@ -171,9 +176,53 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
         // futures are ready. To do that we unconditionally enqueue it for
         // polling here.
         self.ready_to_run_queue.enqueue(ptr);
+        !replacing
+    }
+
+    /// Insert a future into the set and return the displaced future, if there was one.
+    ///
+    /// This method adds the given future to the set. This method will not
+    /// call [`poll`](core::future::Future::poll) on the submitted future. The caller must
+    /// ensure that [`MappedFutures::poll_next`](Stream::poll_next) is called
+    /// in order to receive wake-up notifications for the given future.
+    /// Returns true if another future was ma
+    pub fn replace(&mut self, key: K, future: Fut) -> Option<Fut>
+    where
+        Fut: Unpin,
+    {
+        let replacing = self.remove(&key);
+        let task = Arc::new(Task {
+            future: UnsafeCell::new(Some(future)),
+            next_all: AtomicPtr::new(self.pending_next_all()),
+            prev_all: UnsafeCell::new(ptr::null_mut()),
+            len_all: UnsafeCell::new(0),
+            next_ready_to_run: AtomicPtr::new(ptr::null_mut()),
+            queued: AtomicBool::new(true),
+            ready_to_run_queue: Arc::downgrade(&self.ready_to_run_queue),
+            woken: AtomicBool::new(false),
+            key: UnsafeCell::new(Some(key)),
+        });
+
+        // Reset the `is_terminated` flag if we've previously marked ourselves
+        // as terminated.
+        self.is_terminated.store(false, Relaxed);
+
+        // Right now our task has a strong reference count of 1. We transfer
+        // ownership of this reference count to our internal linked list
+        // and we'll reclaim ownership through the `unlink` method below.
+        let ptr = self.link(task);
+
+        // We'll need to get the future "into the system" to start tracking it,
+        // e.g. getting its wake-up notifications going to us tracking which
+        // futures are ready. To do that we unconditionally enqueue it for
+        // polling here.
+        self.ready_to_run_queue.enqueue(ptr);
+        replacing
     }
 
     /// Remove a future from the set, dropping it.
+    ///
+    /// Returns true if a future was cancelled.
     pub fn cancel(&mut self, key: &K) -> bool {
         if let Some(task) = self.hash_set.get(key) {
             unsafe {
@@ -258,6 +307,15 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
             }
         }
         None
+    }
+
+    pub fn keys<'a>(&'a self) -> Keys<'a, K, Fut> {
+        Keys {
+            inner: self
+                .hash_set
+                .iter()
+                .map(Box::new(|hash_task| HashTask::key_unwrap(hash_task))),
+        }
     }
 
     /// Returns an iterator that allows inspecting each future in the set.
@@ -770,15 +828,14 @@ impl<K: Hash + Eq, Fut> Extend<(K, Fut)> for MappedFutures<K, Fut> {
 #[cfg(test)]
 pub mod tests {
     use crate::mapped_futures::*;
-    use futures_util::StreamExt;
-    // insert some futures, await one, remove another, then
     use futures::executor::block_on;
     use futures::future::LocalBoxFuture;
     use futures_timer::Delay;
+    use futures_util::StreamExt;
     use std::time::Duration;
 
     fn insert_millis(futs: &mut MappedFutures<u32, Delay>, key: u32, millis: u64) {
-        futs.insert(key, Delay::new(Duration::from_millis(millis)))
+        futs.insert(key, Delay::new(Duration::from_millis(millis)));
     }
 
     fn insert_millis_pinned(
@@ -786,7 +843,7 @@ pub mod tests {
         key: u32,
         millis: u64,
     ) {
-        futs.insert(key, Box::pin(Delay::new(Duration::from_millis(millis))))
+        futs.insert(key, Box::pin(Delay::new(Duration::from_millis(millis))));
     }
 
     #[test]
