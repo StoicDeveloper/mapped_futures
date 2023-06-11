@@ -51,9 +51,6 @@ impl<K: Hash + Eq, Fut> HashTask<K, Fut> {
     fn key(&self) -> Option<&K> {
         Task::key(&*self)
     }
-    pub(super) fn key_unwrap(&self) -> &K {
-        unsafe { (&*self.key.get()).as_ref().unwrap() }
-    }
 }
 
 impl<K: Hash + Eq, Fut> Deref for HashTask<K, Fut> {

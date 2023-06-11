@@ -309,12 +309,9 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
         None
     }
 
-    pub fn keys<'a>(&'a self) -> Keys<'a, K, Fut> {
+    pub fn keys(&self) -> Keys<'_, K, Fut> {
         Keys {
-            inner: self
-                .hash_set
-                .iter()
-                .map(Box::new(|hash_task| HashTask::key_unwrap(hash_task))),
+            inner: self.hash_set.iter(),
         }
     }
 

@@ -38,6 +38,12 @@ pub struct IntoIter<K: Hash + Eq, Fut: Unpin> {
     pub(super) inner: MappedFutures<K, Fut>,
 }
 
+/// Immutable iterator over the keys in the mapping.
+// #[derive(Debug)]
+pub struct Keys<'a, K: Hash + Eq, Fut> {
+    pub(super) inner: std::collections::hash_set::Iter<'a, HashTask<K, Fut>>,
+}
+
 impl<K: Hash + Eq, Fut: Unpin> Iterator for IntoIter<K, Fut> {
     type Item = Fut;
 
@@ -161,19 +167,13 @@ impl<'a, K: Hash + Eq, Fut: Unpin> Iterator for Iter<'a, K, Fut> {
 
 impl<K: Hash + Eq, Fut: Unpin> ExactSizeIterator for Iter<'_, K, Fut> {}
 
-pub struct Keys<'a, K: Hash + Eq, Fut> {
-    pub(super) inner: std::iter::Map<
-        std::collections::hash_set::Iter<'a, HashTask<K, Fut>>,
-        Box<dyn FnMut(&'a HashTask<K, Fut>) -> &'a K>,
-    >,
-}
 impl<K: Hash + Eq, Fut: Unpin> ExactSizeIterator for Keys<'_, K, Fut> {}
 
 impl<'a, K: Hash + Eq, Fut> Iterator for Keys<'a, K, Fut> {
     type Item = &'a K;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
+        self.inner.next()?.key()
     }
 }
 
