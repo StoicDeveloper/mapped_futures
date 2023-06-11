@@ -346,6 +346,7 @@ impl<K: Hash + Eq, Fut> MappedFutures<K, Fut> {
             // Set to `None` rather than `take()`ing to prevent moving the
             // future.
             *task.future.get() = None;
+
             let key = &*task.key.get();
             if let Some(key) = key {
                 self.hash_set.remove(key);
@@ -638,10 +639,6 @@ impl<K: Hash + Eq, Fut: Future> Stream for MappedFutures<K, Fut> {
                     continue;
                 }
                 Poll::Ready(output) => {
-                    // Need to get the key, and remove the task from the hash_set
-                    // let key = unsafe { (*bomb.task.as_ref().unwrap().key.get()).take().unwrap() };
-                    // bomb.queue.hash_set.remove(&key); // TODO: The bomb drop already contains this
-                    // logic
                     return Poll::Ready(Some((bomb.task.as_ref().unwrap().take_key(), output)));
                 }
             }

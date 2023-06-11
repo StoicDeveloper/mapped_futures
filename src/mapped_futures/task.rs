@@ -42,6 +42,7 @@ pub(super) struct Task<K: Hash + Eq, Fut> {
     pub(super) key: UnsafeCell<Option<K>>,
 }
 
+// Wrapper struct; exists effectively to implement hash on the type Arc<Task>
 pub(super) struct HashTask<K: Hash + Eq, Fut> {
     pub(super) inner: Arc<Task<K, Fut>>,
 }
@@ -64,7 +65,7 @@ impl<K: Hash + Eq, Fut> Borrow<K> for HashTask<K, Fut> {
 
 impl<K: Hash + Eq, Fut> Hash for HashTask<K, Fut> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        unsafe {(*self.key.get()).as_ref()}.unwrap().hash(state)
+        unsafe { (*self.key.get()).as_ref() }.unwrap().hash(state)
     }
 }
 
