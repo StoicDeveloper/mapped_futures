@@ -26,11 +26,26 @@ use self::iter::Keys;
 #[allow(unreachable_pub)] // https://github.com/rust-lang/rust/issues/102352
 pub use self::iter::{IntoIter, Iter, IterMut, IterPinMut, IterPinRef};
 
+mod bi_multi_map_futures;
+pub use self::bi_multi_map_futures::BiMultiMapFutures;
+
+mod mapped_streams;
+pub use self::mapped_streams::MappedStreams;
+
 mod task;
 use self::task::{HashTask, Task};
 
 mod ready_to_run_queue;
 use self::ready_to_run_queue::{Dequeue, ReadyToRunQueue};
+
+// TODO:
+// BiMapFutures -
+// MultiMapFutures
+// BiMultiMapFutures
+//  - covers use case of accessing all receiving messages by msg id or public key,
+//    or checking whether a particular key-id combo is receiving a msg
+// MappedStreams - Turn streams into StreamFuture and keep in MappedFutures
+//  - covers use case of wanting to access RunningPeers by PublicKey
 
 /// A map of futures which may complete in any order.
 ///
@@ -296,7 +311,7 @@ impl<K: Hash + Eq, Fut, S: BuildHasher> MappedFutures<K, Fut, S> {
     }
 
     /// Get a pinned mutable reference to the mapped future.
-    pub fn get_pin_mut(&mut self, key: &K) -> Option<Pin<&mut Fut>> {
+    pub fn get_pin_mut<'a>(&mut self, key: &K) -> Option<Pin<&'a mut Fut>> {
         if let Some(task_ref) = self.hash_set.get(key) {
             unsafe {
                 if let Some(fut) = &mut *task_ref.inner.future.get() {
@@ -307,8 +322,8 @@ impl<K: Hash + Eq, Fut, S: BuildHasher> MappedFutures<K, Fut, S> {
         None
     }
 
-    /// Get a pinned mutable reference to the mapped future.
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut Fut>
+    /// Get a mutable reference to the mapped future.
+    pub fn get_mut<'a>(&mut self, key: &K) -> Option<&'a mut Fut>
     where
         Fut: Unpin,
     {

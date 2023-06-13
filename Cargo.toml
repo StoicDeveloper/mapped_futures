@@ -11,6 +11,7 @@ description = "A collection of futures based on FuturesUnordered that supports i
 futures-core = "0.3.28"
 futures-task = "0.3.28"
 futures-util = "0.3.28"
+bisetmap = "0.1.6"
 
 [dev-dependencies]
 futures = "0.3.0"
