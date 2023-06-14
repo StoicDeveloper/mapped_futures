@@ -30,7 +30,7 @@ mod bi_multi_map_futures;
 pub use self::bi_multi_map_futures::BiMultiMapFutures;
 
 mod mapped_streams;
-pub use self::mapped_streams::MappedStreams;
+pub use self::mapped_streams::{map_all, MappedStreams};
 
 mod task;
 use self::task::{HashTask, Task};
@@ -41,10 +41,11 @@ use self::ready_to_run_queue::{Dequeue, ReadyToRunQueue};
 // TODO:
 // BiMapFutures -
 // MultiMapFutures
-// BiMultiMapFutures
+// BiMultiMapFutures - Complete
 //  - covers use case of accessing all receiving messages by msg id or public key,
 //    or checking whether a particular key-id combo is receiving a msg
-// MappedStreams - Turn streams into StreamFuture and keep in MappedFutures
+// MappedStreams - Complete
+//  - streams into StreamFuture and keep in MappedFutures
 //  - covers use case of wanting to access RunningPeers by PublicKey
 
 /// A map of futures which may complete in any order.
@@ -240,7 +241,6 @@ impl<K: Hash + Eq, Fut, S: BuildHasher> MappedFutures<K, Fut, S> {
     /// call [`poll`](core::future::Future::poll) on the submitted future. The caller must
     /// ensure that [`MappedFutures::poll_next`](Stream::poll_next) is called
     /// in order to receive wake-up notifications for the given future.
-    /// Returns true if another future was ma
     pub fn replace(&mut self, key: K, future: Fut) -> Option<Fut>
     where
         Fut: Unpin,
@@ -275,7 +275,7 @@ impl<K: Hash + Eq, Fut, S: BuildHasher> MappedFutures<K, Fut, S> {
         replacing
     }
 
-    /// Remove a future from the set, dropping it.
+    /// Remove a future from the map, dropping it.
     ///
     /// Returns true if a future was cancelled.
     pub fn cancel(&mut self, key: &K) -> bool {
