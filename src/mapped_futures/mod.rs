@@ -282,7 +282,9 @@ impl<K: Hash + Eq, Fut, S: BuildHasher> MappedFutures<K, Fut, S> {
         if let Some(task) = self.hash_set.get(key) {
             unsafe {
                 if let Some(_) = (*task.future.get()).take() {
+                    let task_clone = task.inner.clone();
                     self.unlink(Arc::as_ptr(&task.inner));
+                    self.release_task(task_clone);
                     return true;
                 }
             }
@@ -298,7 +300,9 @@ impl<K: Hash + Eq, Fut, S: BuildHasher> MappedFutures<K, Fut, S> {
         if let Some(task) = self.hash_set.get(key) {
             unsafe {
                 let fut = (*task.future.get()).take().unwrap();
+                let task_clone = task.inner.clone();
                 self.unlink(Arc::as_ptr(&task.inner));
+                self.release_task(task_clone);
                 return Some(fut);
             }
         }
@@ -914,6 +918,15 @@ pub mod tests {
         assert_eq!(block_on(futures.next()).unwrap().0, 4);
         assert_eq!(block_on(futures.next()), None);
     }
+
+
+    #[test]
+    fn remove_unpinned() {
+        let mut futures = MappedFutures::new();
+        insert_millis(&mut futures, 1, 50);
+        assert_eq!(block_on(futures.remove(&1).unwrap()), ());
+    }
+
 
     #[test]
     fn remove_pinned() {

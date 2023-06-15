@@ -107,7 +107,6 @@ impl<K: Hash + Eq + Clone, St: Stream + Unpin, S: BuildHasher> MappedStreams<K, 
     /// Remove a stream from the map and return it.
     pub fn remove(&mut self, key: &K) -> Option<St> {
         if let Some(st_fut) = self.inner.remove(key) {
-            println!("returning removed");
             return st_fut.into_inner();
         }
         None
@@ -338,15 +337,10 @@ impl<K: Hash + Eq + Clone, St: Stream + Unpin, S: BuildHasher> ExactSizeIterator
 
 #[cfg(test)]
 pub mod tests {
-
     use std::time::Duration;
     use std::{pin::Pin, task::ready};
-
-    // use futures_core::Stream;
-    // use crate::mapped_streams::*;
     use super::MappedStreams;
     use futures::executor::block_on;
-    use futures::future::FutureExt;
     use futures_core::Stream;
     use futures_lite::FutureExt as FutureLiteExt;
     use futures_task::Poll;
@@ -403,7 +397,6 @@ pub mod tests {
         streams.insert(1, s1);
         streams.insert(2, s2);
         let output: Vec<_> = block_on(streams.collect());
-        // assert_eq!(block_on(streams.next()).unwrap(), (1, Some(1)));
         assert_eq!(
             output,
             vec![(1, Some(1)), (2, Some(2)), (1, None), (2, None)]
@@ -422,12 +415,13 @@ pub mod tests {
         assert_eq!(block_on(streams.next()), Some((1, None)));
     }
 
+
     #[test]
     fn remove_streams() {
-        let mut streams = MappedStreams::new();
+        let mut streams: MappedStreams<i32, DelayStream> = MappedStreams::new();
         streams.insert(1, DelayStream::new(1, 50));
         streams.insert(2, DelayStream::new(1, 60));
         streams.remove(&1);
-        // assert_eq!(block_on(streams.next()), Some((2, Some(()))));
+        assert_eq!(block_on(streams.next()), Some((2, Some(()))));
     }
 }
