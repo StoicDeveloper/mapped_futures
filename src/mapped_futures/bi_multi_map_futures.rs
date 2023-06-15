@@ -1,8 +1,9 @@
 use super::MappedFutures;
 use bisetmap::BisetMap;
 use core::hash::Hash;
-use futures_core::Future;
-use std::pin::Pin;
+use futures_core::{Future, Stream};
+use futures_task::Poll;
+use std::{pin::Pin, task::ready};
 
 /// This is a BiMultiMap structure that associates (LeftKey, RightKey) pairs with a future.
 /// Bi - This is a two-way mapping; each kind of key is mapped to keys of the other kind (and futures)
@@ -226,6 +227,22 @@ impl<L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> BiMultiMapFutures<
     }
 }
 
+impl<L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> Stream
+    for BiMultiMapFutures<L, R, Fut>
+{
+    type Item = (L, R, Fut::Output);
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut futures_task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        match ready!(Pin::new(&mut self.futures).poll_next(cx)) {
+            Some(((left, right), output)) => Poll::Ready(Some((left, right, output))),
+            None => Poll::Ready(None),
+        }
+    }
+}
+
 pub struct RightIterMut<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future + Unpin> {
     left: L,
     inner: Vec<R>,
@@ -355,5 +372,39 @@ impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> Iterator
 impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> LeftIterPinMut<'a, L, R, Fut> {
     pub fn key(&self) -> &R {
         &self.right
+    }
+}
+
+#[cfg(test)]
+#[allow(unused_imports)]
+pub mod tests {
+    use futures::executor::block_on;
+    use futures_timer::Delay;
+    use futures_util::StreamExt;
+    use std::time::Duration;
+
+    use super::BiMultiMapFutures;
+
+    fn insert_millis(
+        futures: &mut BiMultiMapFutures<u32, u32, Delay>,
+        key: (u32, u32),
+        millis: u64,
+    ) {
+        futures.insert(key.0, key.1, Delay::new(Duration::from_millis(millis)));
+    }
+
+    #[test]
+    fn bi_multi_map_futures() {
+        let mut futures = BiMultiMapFutures::new();
+        insert_millis(&mut futures, (1, 1), 50);
+        insert_millis(&mut futures, (1, 2), 60);
+        insert_millis(&mut futures, (2, 3), 70);
+        futures.cancel(&1, &2);
+        let mut ones = futures.get_right_mut(&1);
+        ones.next().unwrap().1.reset(Duration::from_millis(80));
+        // assert_eq!(block_on(ones.next().unwrap().1), ());
+        assert_eq!(block_on(futures.next()).unwrap(), ((2, 3, ())));
+        assert_eq!(block_on(futures.next()).unwrap(), ((1, 1, ())));
+        assert_eq!(block_on(futures.next()), None);
     }
 }
