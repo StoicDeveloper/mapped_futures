@@ -94,12 +94,24 @@ unsafe impl<K: Hash + Eq, Fut> Sync for Task<K, Fut> {}
 
 impl<K: Hash + Eq, Fut> ArcWake for Task<K, Fut> {
     fn wake_by_ref(arc_self: &Arc<Self>) {
-        let inner = match arc_self.ready_to_run_queue.upgrade() {
+        Task::wake_by_ptr(Arc::as_ptr(arc_self));
+    }
+}
+
+impl<K: Hash + Eq, Fut> Task<K, Fut> {
+    /// Returns a waker reference for this task without cloning the Arc.
+    pub(super) fn waker_ref(this: &Arc<Self>) -> WakerRef<'_> {
+        waker_ref(this)
+    }
+
+    pub(super) fn wake_by_ptr(this: *const Task<K, Fut>) {
+        let task = unsafe { &*this };
+        let inner = match task.ready_to_run_queue.upgrade() {
             Some(inner) => inner,
             None => return,
         };
 
-        arc_self.woken.store(true, Relaxed);
+        task.woken.store(true, Relaxed);
 
         // It's our job to enqueue this task it into the ready to run queue. To
         // do this we set the `queued` flag, and if successful we then do the
@@ -113,18 +125,11 @@ impl<K: Hash + Eq, Fut> ArcWake for Task<K, Fut> {
         // implementation guarantees that if we set the `queued` flag that
         // there's a reference count held by the main `FuturesUnordered` queue
         // still.
-        let prev = arc_self.queued.swap(true, SeqCst);
+        let prev = task.queued.swap(true, SeqCst);
         if !prev {
-            inner.enqueue(Arc::as_ptr(arc_self));
+            inner.enqueue(this);
             inner.waker.wake();
         }
-    }
-}
-
-impl<K: Hash + Eq, Fut> Task<K, Fut> {
-    /// Returns a waker reference for this task without cloning the Arc.
-    pub(super) fn waker_ref(this: &Arc<Self>) -> WakerRef<'_> {
-        waker_ref(this)
     }
 
     /// Spins until `next_all` is no longer set to `pending_next_all`.

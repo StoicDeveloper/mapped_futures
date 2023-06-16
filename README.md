@@ -41,4 +41,4 @@ assert_eq!(block_on(futures.replace(&2, Delay::new(Duration::from_millis(125))))
 assert_eq!(block_on(futures.next()).unwrap().0, 3);
 ```
 
-A similar interface exists for `MappedStreams` but with streams instead of futures. If your future mapping needs are more complex, you can use `BiMultiMapFutures`, which suppports one-to-many relationships between two kinds of key and futures. So each key will be associated with zero or more futures, but each (leftkey, rightkey) pair will be associated with at most one future.
+A similar interface exists for `MappedStreams` but with streams instead of futures. If your future mapping needs are more complex, you can use `BiMultiMapFutures`, which suppports one-to-many relationships between futures and two kinds of key. So each key will be associated with zero or more futures, but each (leftkey, rightkey) pair will be associated with at most one future.

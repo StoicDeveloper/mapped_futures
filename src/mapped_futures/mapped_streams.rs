@@ -1,6 +1,6 @@
 //! An unbounded map of streams
 
-use super::MappedFutures;
+use super::{FutMut, MappedFutures};
 
 use core::fmt::{self, Debug};
 use core::hash::Hash;
@@ -8,6 +8,7 @@ use core::iter::FromIterator;
 use core::pin::Pin;
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
+use std::ops::{Deref, DerefMut};
 
 use futures_core::ready;
 use futures_core::stream::{FusedStream, Stream};
@@ -113,16 +114,18 @@ impl<K: Hash + Eq + Clone, St: Stream + Unpin, S: BuildHasher> MappedStreams<K, 
     }
 
     /// Get a mutable reference to the mapped stream.
-    pub fn get_mut<'a>(&mut self, key: &K) -> Option<&'a mut St> {
+    pub fn get_mut<'a>(&mut self, key: &K) -> Option<StMut<'a, K, St, S>> {
         if let Some(st_fut) = self.inner.get_mut(key) {
-            return st_fut.get_mut();
+            // return StreamFuture::get_mut(&st_fut);
+            return Some(StMut { inner: st_fut });
+            // return st_fut.get_mut();
         }
         None
     }
 
-    /// Get a mutable reference to the mapped stream.
+    /// Get a shared reference to the mapped stream.
     pub fn get<'a>(&mut self, key: &K) -> Option<&'a St> {
-        if let Some(st_fut) = self.inner.get_mut(key) {
+        if let Some(st_fut) = self.inner.get(key) {
             return st_fut.get_ref();
         }
         None
@@ -143,6 +146,23 @@ impl<K: Hash + Eq + Clone, St: Stream + Unpin, S: BuildHasher> MappedStreams<K, 
         let replacing = self.remove(&key);
         self.insert(key, stream);
         replacing
+    }
+}
+
+pub struct StMut<'a, K: Hash + Eq, St: Stream + Unpin, S: BuildHasher> {
+    inner: FutMut<'a, K, StreamFuture<St>, S>,
+}
+
+impl<'a, K: Hash + Eq, St: Stream + Unpin, S: BuildHasher> Deref for StMut<'a, K, St, S> {
+    type Target = St;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.get_ref().unwrap()
+    }
+}
+impl<'a, K: Hash + Eq, St: Stream + Unpin, S: BuildHasher> DerefMut for StMut<'a, K, St, S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner.get_mut().unwrap()
     }
 }
 
@@ -337,8 +357,6 @@ impl<K: Hash + Eq + Clone, St: Stream + Unpin, S: BuildHasher> ExactSizeIterator
 
 #[cfg(test)]
 pub mod tests {
-    use std::time::Duration;
-    use std::{pin::Pin, task::ready};
     use super::MappedStreams;
     use futures::executor::block_on;
     use futures_core::Stream;
@@ -346,6 +364,8 @@ pub mod tests {
     use futures_task::Poll;
     use futures_timer::Delay;
     use futures_util::StreamExt;
+    use std::time::Duration;
+    use std::{pin::Pin, task::ready};
 
     struct DelayStream {
         num: u8,
@@ -414,7 +434,6 @@ pub mod tests {
         assert_eq!(block_on(streams.next()), Some((1, Some(()))));
         assert_eq!(block_on(streams.next()), Some((1, None)));
     }
-
 
     #[test]
     fn remove_streams() {

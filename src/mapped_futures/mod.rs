@@ -18,6 +18,7 @@ use futures_core::task::{Context, Poll};
 use std::collections::hash_map::RandomState;
 use std::collections::HashSet;
 use std::hash::BuildHasher;
+use std::ops::{Deref, DerefMut};
 
 mod abort;
 
@@ -29,8 +30,8 @@ pub use self::iter::{IntoIter, Iter, IterMut, IterPinMut, IterPinRef};
 mod bi_multi_map_futures;
 pub use self::bi_multi_map_futures::BiMultiMapFutures;
 
-mod mapped_streams;
-pub use self::mapped_streams::{map_all, MappedStreams};
+// mod mapped_streams;
+// pub use self::mapped_streams::{map_all, MappedStreams};
 
 mod task;
 use self::task::{HashTask, Task};
@@ -315,34 +316,43 @@ impl<K: Hash + Eq, Fut, S: BuildHasher> MappedFutures<K, Fut, S> {
     }
 
     /// Get a pinned mutable reference to the mapped future.
-    pub fn get_pin_mut<'a>(&mut self, key: &K) -> Option<Pin<&'a mut Fut>> {
+    pub fn get_pin_mut<'a>(&'a mut self, key: &K) -> Option<Pin<FutMut<'a, K, Fut>>> {
         if let Some(task_ref) = self.hash_set.get(key) {
             unsafe {
-                if let Some(fut) = &mut *task_ref.inner.future.get() {
-                    return Some(Pin::new_unchecked(fut));
-                }
+                return Some(Pin::new_unchecked(FutMut::new(&task_ref.inner)));
             }
         }
         None
     }
 
     /// Get a mutable reference to the mapped future.
-    pub fn get_mut<'a>(&mut self, key: &K) -> Option<&'a mut Fut>
+    pub fn get_mut<'a>(&mut self, key: &K) -> Option<FutMut<K, Fut>>
     where
         Fut: Unpin,
     {
         if let Some(task_ref) = self.hash_set.get(key) {
-            unsafe {
-                if let Some(fut) = &mut *task_ref.inner.future.get() {
-                    return Some(fut);
-                }
-            }
+            return Some(FutMut::new(&task_ref.inner));
         }
         None
     }
 
+    /// Get a mutable reference to the mapped future.
+    // pub fn get_mut<'a>(&mut self, key: &K) -> Option<&'a mut Fut>
+    // where
+    //     Fut: Unpin,
+    // {
+    //     if let Some(task_ref) = self.hash_set.get(key) {
+    //         unsafe {
+    //             if let Some(fut) = &mut *task_ref.inner.future.get() {
+    //                 return Some(fut);
+    //             }
+    //         }
+    //     }
+    //     None
+    // }
+
     /// Get a shared reference to the mapped future.
-    pub fn get(&mut self, key: &K) -> Option<&Fut>
+    pub fn get<'a>(&mut self, key: &K) -> Option<&'a Fut>
     where
         Fut: Unpin,
     {
@@ -883,6 +893,97 @@ impl<K: Hash + Eq, Fut, S: BuildHasher> Extend<(K, Fut)> for MappedFutures<K, Fu
     }
 }
 
+pub struct FutMut<'a, K: Hash + Eq, Fut> {
+    inner: *const Task<K, Fut>,
+    mutated: bool,
+    _marker: PhantomData<&'a mut Task<K, Fut>>,
+}
+
+impl<'a, K: Hash + Eq, Fut> Deref for FutMut<'a, K, Fut> {
+    type Target = Fut;
+
+    fn deref(&self) -> &Self::Target {
+        // This will not panic, because if this method was called, then the task was obtained from
+        // the HashSet, and so it must still have its future.
+        unsafe { (*(*self.inner).future.get()).as_ref().unwrap() }
+    }
+}
+
+impl<'a, K: Hash + Eq, Fut> DerefMut for FutMut<'a, K, Fut> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.mutated = true;
+        // This will not panic, because if this method was called, then the task was obtained from
+        // the HashSet, and so it must still have its future.
+        unsafe { (*(*self.inner).future.get()).as_mut().unwrap() }
+    }
+}
+
+impl<'a, K: Hash + Eq, Fut> Drop for FutMut<'a, K, Fut> {
+    fn drop(&mut self) {
+        if self.mutated {
+            Task::wake_by_ptr(self.inner);
+        }
+    }
+}
+
+impl<'a, K: Hash + Eq, Fut> FutMut<'a, K, Fut> {
+    fn new(task: &'a Arc<Task<K, Fut>>) -> Self {
+        FutMut {
+            inner: Arc::as_ptr(task),
+            mutated: false,
+            _marker: PhantomData,
+        }
+    }
+    fn new_from_ptr(task: *const Task<K, Fut>) -> Self {
+        FutMut {
+            inner: task,
+            mutated: false,
+            _marker: PhantomData,
+        }
+    }
+}
+//
+// pub struct FutPinMut<K: Hash + Eq, Fut> {
+//     inner: Arc<Task<K, Fut>>,
+//     mutated: bool,
+//     _marker: PhantomData<&'a mut MappedFutures<K, Fut, S>>,
+// }
+//
+// impl<K: Hash + Eq, Fut> FutPinMut<K, Fut> {
+//     pub fn get(&mut self) -> Pin<&mut Fut> {
+//         self.mutated = true;
+//         unsafe { Pin::new_unchecked((*self.inner.future.get()).as_mut().unwrap()) }
+//     }
+//
+//     fn new(task: Arc<Task<K, Fut>>) -> Self {
+//         FutPinMut {
+//             inner: task.clone(),
+//             mutated: false,
+//         }
+//     }
+// }
+//
+// impl<K: Hash + Eq, Fut> Deref for FutPinMut<'a,K, Fut> {
+//     type Target = Pin<&'a Fut>;
+//
+//     fn deref(&self) -> &Self::Target {
+//         unsafe { (*self.inner.future.get()).as_ref().unwrap() }
+//     }
+// }
+//
+// impl<K: Hash + Eq, Fut> DerefMut for FutPinMut<K, Fut> {
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//     }
+// }
+//
+// impl<K: Hash + Eq, Fut> Drop for FutPinMut<K, Fut> {
+//     fn drop(&mut self) {
+//         if self.mutated {
+//             Task::wake_by_ref(&self.inner);
+//         }
+//     }
+// }
+
 #[cfg(test)]
 pub mod tests {
     use crate::mapped_futures::*;
@@ -919,14 +1020,12 @@ pub mod tests {
         assert_eq!(block_on(futures.next()), None);
     }
 
-
     #[test]
     fn remove_unpinned() {
         let mut futures = MappedFutures::new();
         insert_millis(&mut futures, 1, 50);
         assert_eq!(block_on(futures.remove(&1).unwrap()), ());
     }
-
 
     #[test]
     fn remove_pinned() {
@@ -960,5 +1059,16 @@ pub mod tests {
         assert_eq!(block_on(futures.next()).unwrap().0, 2);
         assert_eq!(block_on(futures.next()).unwrap().0, 4);
         assert_eq!(block_on(futures.next()), None);
+    }
+
+    #[test]
+    fn iter() {
+        let mut futures = MappedFutures::new();
+        insert_millis(&mut futures, 1, 50);
+        insert_millis(&mut futures, 2, 100);
+        insert_millis(&mut futures, 3, 150);
+        let mut iter = futures.iter_mut();
+        insert_millis(&mut futures, 3, 150);
+        iter.next();
     }
 }

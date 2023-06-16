@@ -1,9 +1,9 @@
-use super::MappedFutures;
+use super::{task::Task, FutMut, MappedFutures};
 use bisetmap::BisetMap;
 use core::hash::Hash;
 use futures_core::{Future, Stream};
 use futures_task::Poll;
-use std::{pin::Pin, task::ready};
+use std::{marker::PhantomData, pin::Pin, sync::Arc, task::ready};
 
 /// This is a BiMultiMap structure that associates (LeftKey, RightKey) pairs with a future.
 /// Bi - This is a two-way mapping; each kind of key is mapped to keys of the other kind (and futures)
@@ -78,7 +78,7 @@ impl<L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> BiMultiMapFutures<
     }
 
     /// Get a mutable reference to the corresponding future.
-    pub fn get_mut(&mut self, left: &L, right: &R) -> Option<&mut Fut>
+    pub fn get_mut(&mut self, left: &L, right: &R) -> Option<FutMut<(L, R), Fut>>
     where
         Fut: Unpin,
     {
@@ -86,7 +86,7 @@ impl<L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> BiMultiMapFutures<
     }
 
     /// Get a mutable reference to the corresponding future.
-    pub fn get_pin_mut(&mut self, left: &L, right: &R) -> Option<Pin<&mut Fut>> {
+    pub fn get_pin_mut(&mut self, left: &L, right: &R) -> Option<Pin<FutMut<(L, R), Fut>>> {
         self.futures.get_pin_mut(&(left.clone(), right.clone()))
     }
 
@@ -96,12 +96,7 @@ impl<L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> BiMultiMapFutures<
     where
         Fut: Unpin,
     {
-        let rights = self.bi_multi_map.get(left);
-        RightIterMut {
-            left: left.clone(),
-            inner: rights,
-            futures: self,
-        }
+        RightIterMut::new(self, left)
     }
 
     /// Get an iterator of mutable references to the futures and left keys that are associated
@@ -110,34 +105,19 @@ impl<L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> BiMultiMapFutures<
     where
         Fut: Unpin,
     {
-        let lefts = self.bi_multi_map.rev_get(right);
-        LeftIterMut {
-            right: right.clone(),
-            inner: lefts,
-            futures: self,
-        }
+        LeftIterMut::new(self, right)
     }
 
     /// Get an iterator of mutable pinned references to the futures and right keys that are associated
     /// with the provided left key.
     pub fn get_right_pin_mut(&mut self, left: &L) -> RightIterPinMut<L, R, Fut> {
-        let rights = self.bi_multi_map.get(left);
-        RightIterPinMut {
-            left: left.clone(),
-            inner: rights,
-            futures: self,
-        }
+        RightIterPinMut::new(self, left)
     }
 
     /// Get an iterator of mutable pinned references to the futures and left keys that are associated
     /// with the provided right key.
     pub fn get_left_pin_mut(&mut self, right: &R) -> LeftIterPinMut<L, R, Fut> {
-        let lefts = self.bi_multi_map.rev_get(right);
-        LeftIterPinMut {
-            right: right.clone(),
-            inner: lefts,
-            futures: self,
-        }
+        LeftIterPinMut::new(self, right)
     }
 
     /// Remove and drop all futures corresponding to the provided left key.
@@ -243,135 +223,125 @@ impl<L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> Stream
     }
 }
 
-pub struct RightIterMut<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future + Unpin> {
-    left: L,
-    inner: Vec<R>,
-    futures: &'a mut BiMultiMapFutures<L, R, Fut>,
+pub struct RightIterPinMut<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> {
+    inner: Vec<(R, *const Task<(L, R), Fut>)>,
+    _marker: PhantomData<&'a mut MappedFutures<(L, R), Fut>>,
 }
+
+impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> RightIterPinMut<'a, L, R, Fut> {
+    fn new(futures: &'a mut BiMultiMapFutures<L, R, Fut>, left: &L) -> Self {
+        let rights = futures.bi_multi_map.get(left);
+        let mut tasks = vec![];
+        rights.into_iter().for_each(|right| {
+            let key = (left.clone(), right);
+            let hash_task = futures.futures.hash_set.get(&key).unwrap();
+            tasks.push((key.1, Arc::as_ptr(&hash_task.inner)));
+        });
+        RightIterPinMut {
+            inner: tasks,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> Iterator
+    for RightIterPinMut<'a, L, R, Fut>
+{
+    type Item = (R, Pin<FutMut<'a, (L, R), Fut>>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        unsafe {
+            self.inner
+                .pop()
+                .map(|(left, task)| (left, Pin::new_unchecked(FutMut::new_from_ptr(task))))
+        }
+    }
+}
+
+pub struct LeftIterPinMut<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> {
+    inner: Vec<(L, *const Task<(L, R), Fut>)>,
+    _marker: PhantomData<&'a mut MappedFutures<(L, R), Fut>>,
+}
+
+impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> Iterator
+    for LeftIterPinMut<'a, L, R, Fut>
+{
+    type Item = (L, Pin<FutMut<'a, (L, R), Fut>>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        unsafe {
+            self.inner
+                .pop()
+                .map(|(right, task)| (right, Pin::new_unchecked(FutMut::new_from_ptr(task))))
+        }
+    }
+}
+
+impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> LeftIterPinMut<'a, L, R, Fut> {
+    fn new(futures: &'a mut BiMultiMapFutures<L, R, Fut>, right: &R) -> Self {
+        let lefts = futures.bi_multi_map.rev_get(right);
+        let mut tasks = vec![];
+        lefts.into_iter().for_each(|left| {
+            let key = (left, right.clone());
+            let hash_task = futures.futures.hash_set.get(&key).unwrap();
+            tasks.push((key.0, Arc::as_ptr(&hash_task.inner)));
+        });
+        LeftIterPinMut {
+            inner: tasks,
+            _marker: PhantomData,
+        }
+    }
+}
+
+// impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future + Unpin>
+//     LeftIterMut<'a, L, R, Fut>
+// {
+//     pub fn key(&self) -> &R {
+//         &self.right
+//     }
+// }
+
+pub struct RightIterMut<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future>(
+    RightIterPinMut<'a, L, R, Fut>,
+);
 
 impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future + Unpin> Iterator
     for RightIterMut<'a, L, R, Fut>
 {
-    type Item = (R, &'a mut Fut);
+    type Item = (R, FutMut<'a, (L, R), Fut>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let right = self.inner.pop();
-        match right {
-            Some(right) => {
-                let fut: Option<&'a mut Fut> = self
-                    .futures
-                    .futures
-                    .get_mut(&(self.left.clone(), right.clone()));
-                Some((right, fut.unwrap()))
-            }
-            None => None,
-        }
+        self.0.next().map(|(key, fut)| (key, Pin::into_inner(fut)))
     }
 }
 
 impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future + Unpin>
     RightIterMut<'a, L, R, Fut>
 {
-    pub fn key(&self) -> &L {
-        &self.left
+    fn new(futures: &'a mut BiMultiMapFutures<L, R, Fut>, left: &L) -> Self {
+        Self(RightIterPinMut::new(futures, left))
     }
 }
 
-pub struct LeftIterMut<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future + Unpin> {
-    right: R,
-    inner: Vec<L>,
-    futures: &'a mut BiMultiMapFutures<L, R, Fut>,
-}
+pub struct LeftIterMut<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future>(
+    LeftIterPinMut<'a, L, R, Fut>,
+);
 
 impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future + Unpin> Iterator
     for LeftIterMut<'a, L, R, Fut>
 {
-    type Item = (L, &'a mut Fut);
+    type Item = (L, FutMut<'a, (L, R), Fut>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let left = self.inner.pop();
-        match left {
-            Some(left) => {
-                let fut: Option<&'a mut Fut> = self
-                    .futures
-                    .futures
-                    .get_mut(&(left.clone(), self.right.clone()));
-                Some((left, fut.unwrap()))
-            }
-            None => None,
-        }
+        self.0.next().map(|(key, fut)| (key, Pin::into_inner(fut)))
     }
 }
 
 impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future + Unpin>
     LeftIterMut<'a, L, R, Fut>
 {
-    pub fn key(&self) -> &R {
-        &self.right
-    }
-}
-
-pub struct RightIterPinMut<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> {
-    left: L,
-    inner: Vec<R>,
-    futures: &'a mut BiMultiMapFutures<L, R, Fut>,
-}
-
-impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> Iterator
-    for RightIterPinMut<'a, L, R, Fut>
-{
-    type Item = (R, Pin<&'a mut Fut>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let right = self.inner.pop();
-        match right {
-            Some(right) => {
-                let fut: Option<Pin<&'a mut Fut>> = self
-                    .futures
-                    .futures
-                    .get_pin_mut(&(self.left.clone(), right.clone()));
-                Some((right, fut.unwrap()))
-            }
-            None => None,
-        }
-    }
-}
-
-impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> RightIterPinMut<'a, L, R, Fut> {
-    pub fn key(&self) -> &L {
-        &self.left
-    }
-}
-
-pub struct LeftIterPinMut<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> {
-    right: R,
-    inner: Vec<L>,
-    futures: &'a mut BiMultiMapFutures<L, R, Fut>,
-}
-
-impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> Iterator
-    for LeftIterPinMut<'a, L, R, Fut>
-{
-    type Item = (L, Pin<&'a mut Fut>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let left = self.inner.pop();
-        match left {
-            Some(left) => {
-                let fut: Option<Pin<&'a mut Fut>> = self
-                    .futures
-                    .futures
-                    .get_pin_mut(&(left.clone(), self.right.clone()));
-                Some((left, fut.unwrap()))
-            }
-            None => None,
-        }
-    }
-}
-
-impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> LeftIterPinMut<'a, L, R, Fut> {
-    pub fn key(&self) -> &R {
-        &self.right
+    fn new(futures: &'a mut BiMultiMapFutures<L, R, Fut>, right: &R) -> Self {
+        Self(LeftIterPinMut::new(futures, right))
     }
 }
 
@@ -402,7 +372,6 @@ pub mod tests {
         futures.cancel(&1, &2);
         let mut ones = futures.get_right_mut(&1);
         ones.next().unwrap().1.reset(Duration::from_millis(80));
-        // assert_eq!(block_on(ones.next().unwrap().1), ());
         assert_eq!(block_on(futures.next()).unwrap(), ((2, 3, ())));
         assert_eq!(block_on(futures.next()).unwrap(), ((1, 1, ())));
         assert_eq!(block_on(futures.next()), None);
