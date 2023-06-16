@@ -1,6 +1,6 @@
 # Mapped Futures
 
-This library contains several structs that map keys to asynchronous tasks. It contains `MappedFutures`, `BiMultiMapFutures`, and `MappedStreams`. Once added, the futures or streams can be mutated or removed if you have the key. These modules add mapping data structures to FuturesUnordered, so futures will only be polled after being woken, and will complete out of order.
+This library contains several structs that map keys to asynchronous tasks. It contains `MappedFutures`, `BiMultiMapFutures`, `MappedStreams`, and `BiMultiMapStreams`. Once added, the futures or streams can be mutated or removed if you have the key. These modules add mapping data structures to FuturesUnordered, so futures will only be polled after being woken, and will complete out of order.
 
 You can create the mapping, insert futures, cancel them, and wait for the next completing future, which will return the future's output and its key. If the future is `Unpin` then a reference can be retrieved for mutation with `MappedFutures::get_mut()`, otherwise `MappedFutures::get_pin_mut()` must be used.
 
@@ -41,4 +41,4 @@ assert_eq!(block_on(futures.replace(&2, Delay::new(Duration::from_millis(125))))
 assert_eq!(block_on(futures.next()).unwrap().0, 3);
 ```
 
-A similar interface exists for `MappedStreams` but with streams instead of futures. If your future mapping needs are more complex, you can use `BiMultiMapFutures`, which suppports one-to-many relationships between futures and two kinds of key. So each key will be associated with zero or more futures, but each (leftkey, rightkey) pair will be associated with at most one future.
+A similar interface exists for `MappedStreams` but with streams instead of futures. If your future mapping needs are more complex, you can use `BiMultiMapFutures`, which suppports one-to-many relationships between futures and two kinds of key. So each key will be associated with zero or more futures, but each (leftkey, rightkey) pair will be associated with at most one future. `BiMultiMapStreams` does the same for streams.

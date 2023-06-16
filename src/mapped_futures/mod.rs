@@ -33,6 +33,9 @@ pub use self::bi_multi_map_futures::BiMultiMapFutures;
 mod mapped_streams;
 pub use self::mapped_streams::{map_all, MappedStreams};
 
+mod bi_multi_map_streams;
+pub use self::bi_multi_map_streams::BiMultiMapStreams;
+
 mod task;
 use self::task::{HashTask, Task};
 

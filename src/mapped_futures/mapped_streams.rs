@@ -1,5 +1,6 @@
 //! An unbounded map of streams
 
+use super::task::Task;
 use super::{FutMut, MappedFutures};
 
 use core::fmt::{self, Debug};
@@ -16,7 +17,7 @@ use futures_core::task::{Context, Poll};
 
 use futures_util::stream::{StreamExt, StreamFuture};
 
-/// An unbounded map of streams
+/// An unbounded bimultimap of streams
 ///
 /// This "combinator" provides the ability to maintain a map of streams
 /// and drive them all to completion.
@@ -25,14 +26,14 @@ use futures_util::stream::{StreamExt, StreamFuture};
 /// yielded as they become ready. Streams will only be polled when they
 /// generate notifications. This allows to coordinate a large number of streams.
 ///
-/// You can start with an empty map with the `MappedStreams::new` constructor or
-/// you can collect from an iterator whose items are (key, stream) pairs.
+/// You can start with an empty map with the `BiMultiMappedStreams::new` constructor or
+/// you can collect from an iterator whose items are (leftkey, rightkey , stream) triples.
 #[must_use = "streams do nothing unless polled"]
 pub struct MappedStreams<K: Hash + Eq, St, S = RandomState>
 where
     S: BuildHasher,
 {
-    inner: MappedFutures<K, StreamFuture<St>, S>,
+    pub(super) inner: MappedFutures<K, StreamFuture<St>, S>,
 }
 
 impl<K: Hash + Eq + Clone, St: Debug> Debug for MappedStreams<K, St> {
@@ -135,8 +136,8 @@ impl<K: Hash + Eq + Clone, St: Stream + Unpin, S: BuildHasher> MappedStreams<K, 
     /// function will not call `poll` on the submitted stream. The caller must
     /// ensure that `MappedStreams::poll` is called in order to receive task
     /// notifications.
-    pub fn insert(&mut self, key: K, stream: St) {
-        self.inner.insert(key, stream.into_future());
+    pub fn insert(&mut self, key: K, stream: St) -> bool {
+        self.inner.insert(key, stream.into_future())
     }
 
     /// Insert a future into the set and return the displaced future, if there was one.
@@ -167,6 +168,21 @@ impl<'a, K: Hash + Eq, St: Stream + Unpin> DerefMut for StMut<'a, K, St> {
 impl<K: Hash + Eq + Clone, St: Stream + Unpin> Default for MappedStreams<K, St> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<'a, K: Hash + Eq, St: Stream + Unpin> StMut<'a, K, St> {
+    // fn new(task: &'a Arc<Task<K, StreamFuture<St>>>) -> Self {
+    //     FutMut {
+    //         inner: Arc::as_ptr(task),
+    //         mutated: false,
+    //         _marker: PhantomData,
+    //     }
+    // }
+    pub(super) fn new_from_ptr(task: *const Task<K, StreamFuture<St>>) -> Self {
+        StMut {
+            inner: FutMut::new_from_ptr(task),
+        }
     }
 }
 
@@ -232,7 +248,7 @@ impl<K: Hash + Eq + Clone, St: Stream + Unpin> FromIterator<(K, St)> for MappedS
 impl<K: Hash + Eq + Clone, St: Stream + Unpin> Extend<(K, St)> for MappedStreams<K, St> {
     fn extend<T: IntoIterator<Item = (K, St)>>(&mut self, iter: T) {
         for (key, st) in iter {
-            self.insert(key, st)
+            self.insert(key, st);
         }
     }
 }
