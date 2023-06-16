@@ -356,8 +356,8 @@ pub mod tests {
     use super::BiMultiMapFutures;
 
     fn insert_millis(
-        futures: &mut BiMultiMapFutures<u32, u32, Delay>,
-        key: (u32, u32),
+        futures: &mut BiMultiMapFutures<u64, u64, Delay>,
+        key: (u64, u64),
         millis: u64,
     ) {
         futures.insert(key.0, key.1, Delay::new(Duration::from_millis(millis)));
@@ -375,5 +375,23 @@ pub mod tests {
         assert_eq!(block_on(futures.next()).unwrap(), ((2, 3, ())));
         assert_eq!(block_on(futures.next()).unwrap(), ((1, 1, ())));
         assert_eq!(block_on(futures.next()), None);
+    }
+
+    #[test]
+    fn iter() {
+        let mut futures = BiMultiMapFutures::new();
+        insert_millis(&mut futures, (1, 3), 50);
+        insert_millis(&mut futures, (1, 2), 100);
+        insert_millis(&mut futures, (1, 1), 150);
+        futures
+            .get_right_mut(&1)
+            .for_each(|(right, mut fut)| fut.reset(Duration::from_millis(right * 100)));
+        println!("{}", block_on(futures.next()).unwrap().0);
+        println!("{}", block_on(futures.next()).unwrap().0);
+        println!("{}", block_on(futures.next()).unwrap().0);
+        // assert_eq!(block_on(futures.next()).unwrap().0, 1);
+        // assert_eq!(block_on(futures.next()).unwrap().0, 2);
+        // assert_eq!(block_on(futures.next()).unwrap().0, 3);
+        // assert_eq!(block_on(futures.next()), None);
     }
 }

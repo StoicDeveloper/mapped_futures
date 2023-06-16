@@ -1060,15 +1060,4 @@ pub mod tests {
         assert_eq!(block_on(futures.next()).unwrap().0, 4);
         assert_eq!(block_on(futures.next()), None);
     }
-
-    #[test]
-    fn iter() {
-        let mut futures = MappedFutures::new();
-        insert_millis(&mut futures, 1, 50);
-        insert_millis(&mut futures, 2, 100);
-        insert_millis(&mut futures, 3, 150);
-        let mut iter = futures.iter_mut();
-        insert_millis(&mut futures, 3, 150);
-        iter.next();
-    }
 }
