@@ -114,11 +114,9 @@ impl<K: Hash + Eq + Clone, St: Stream + Unpin, S: BuildHasher> MappedStreams<K, 
     }
 
     /// Get a mutable reference to the mapped stream.
-    pub fn get_mut<'a>(&mut self, key: &K) -> Option<StMut<'a, K, St, S>> {
+    pub fn get_mut<'a>(&'a mut self, key: &K) -> Option<StMut<'a, K, St>> {
         if let Some(st_fut) = self.inner.get_mut(key) {
-            // return StreamFuture::get_mut(&st_fut);
             return Some(StMut { inner: st_fut });
-            // return st_fut.get_mut();
         }
         None
     }
@@ -149,18 +147,18 @@ impl<K: Hash + Eq + Clone, St: Stream + Unpin, S: BuildHasher> MappedStreams<K, 
     }
 }
 
-pub struct StMut<'a, K: Hash + Eq, St: Stream + Unpin, S: BuildHasher> {
-    inner: FutMut<'a, K, StreamFuture<St>, S>,
+pub struct StMut<'a, K: Hash + Eq, St: Stream + Unpin> {
+    inner: FutMut<'a, K, StreamFuture<St>>,
 }
 
-impl<'a, K: Hash + Eq, St: Stream + Unpin, S: BuildHasher> Deref for StMut<'a, K, St, S> {
+impl<'a, K: Hash + Eq, St: Stream + Unpin> Deref for StMut<'a, K, St> {
     type Target = St;
 
     fn deref(&self) -> &Self::Target {
         self.inner.get_ref().unwrap()
     }
 }
-impl<'a, K: Hash + Eq, St: Stream + Unpin, S: BuildHasher> DerefMut for StMut<'a, K, St, S> {
+impl<'a, K: Hash + Eq, St: Stream + Unpin> DerefMut for StMut<'a, K, St> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner.get_mut().unwrap()
     }

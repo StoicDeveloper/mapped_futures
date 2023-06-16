@@ -30,8 +30,8 @@ pub use self::iter::{IntoIter, Iter, IterMut, IterPinMut, IterPinRef};
 mod bi_multi_map_futures;
 pub use self::bi_multi_map_futures::BiMultiMapFutures;
 
-// mod mapped_streams;
-// pub use self::mapped_streams::{map_all, MappedStreams};
+mod mapped_streams;
+pub use self::mapped_streams::{map_all, MappedStreams};
 
 mod task;
 use self::task::{HashTask, Task};
