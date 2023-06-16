@@ -386,12 +386,9 @@ pub mod tests {
         futures
             .get_right_mut(&1)
             .for_each(|(right, mut fut)| fut.reset(Duration::from_millis(right * 100)));
-        println!("{}", block_on(futures.next()).unwrap().0);
-        println!("{}", block_on(futures.next()).unwrap().0);
-        println!("{}", block_on(futures.next()).unwrap().0);
-        // assert_eq!(block_on(futures.next()).unwrap().0, 1);
-        // assert_eq!(block_on(futures.next()).unwrap().0, 2);
-        // assert_eq!(block_on(futures.next()).unwrap().0, 3);
-        // assert_eq!(block_on(futures.next()), None);
+        assert_eq!(block_on(futures.next()).unwrap().1, 1);
+        assert_eq!(block_on(futures.next()).unwrap().1, 2);
+        assert_eq!(block_on(futures.next()).unwrap().1, 3);
+        assert_eq!(block_on(futures.next()), None);
     }
 }
