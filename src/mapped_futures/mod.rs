@@ -923,7 +923,9 @@ impl<'a, K: Hash + Eq, Fut> DerefMut for FutMut<'a, K, Fut> {
 
 impl<'a, K: Hash + Eq, Fut> Drop for FutMut<'a, K, Fut> {
     fn drop(&mut self) {
+        println!("dropping fut mut");
         if self.mutated {
+            println!("waking from FutMut");
             Task::wake_by_ptr(self.inner);
         }
     }
@@ -1062,5 +1064,34 @@ pub mod tests {
         assert_eq!(block_on(futures.next()).unwrap().0, 2);
         assert_eq!(block_on(futures.next()).unwrap().0, 4);
         assert_eq!(block_on(futures.next()), None);
+    }
+
+    struct WakeMutateTest {
+        inner: MappedFutures<u32, Delay>,
+    }
+
+    impl Future for WakeMutateTest {
+        type Output = bool;
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            if let Poll::Pending = self.inner.poll_next_unpin(cx) {
+                self.inner
+                    .get_mut(&1)
+                    .unwrap()
+                    .reset(Duration::from_millis(0));
+                if let Poll::Ready(_) = self.inner.poll_next_unpin(cx) {
+                    return Poll::Ready(true);
+                }
+            }
+            Poll::Ready(false)
+        }
+    }
+
+    #[test]
+    fn wake_mutate() {
+        let mut futures = MappedFutures::new();
+        insert_millis(&mut futures, 1, 100);
+        let fut = WakeMutateTest { inner: futures };
+        assert!(block_on(fut));
     }
 }
