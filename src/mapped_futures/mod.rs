@@ -923,9 +923,7 @@ impl<'a, K: Hash + Eq, Fut> DerefMut for FutMut<'a, K, Fut> {
 
 impl<'a, K: Hash + Eq, Fut> Drop for FutMut<'a, K, Fut> {
     fn drop(&mut self) {
-        println!("dropping fut mut");
         if self.mutated {
-            println!("waking from FutMut");
             Task::wake_by_ptr(self.inner);
         }
     }
@@ -1067,7 +1065,7 @@ pub mod tests {
     }
 
     struct WakeMutateTest {
-        inner: MappedFutures<u32, Delay>,
+        inner: MappedFutures<u32, BoolFut>,
     }
 
     impl Future for WakeMutateTest {
@@ -1075,10 +1073,7 @@ pub mod tests {
 
         fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
             if let Poll::Pending = self.inner.poll_next_unpin(cx) {
-                self.inner
-                    .get_mut(&1)
-                    .unwrap()
-                    .reset(Duration::from_millis(0));
+                self.inner.get_mut(&1).unwrap().0 = true;
                 if let Poll::Ready(_) = self.inner.poll_next_unpin(cx) {
                     return Poll::Ready(true);
                 }
@@ -1087,10 +1082,22 @@ pub mod tests {
         }
     }
 
+    struct BoolFut(bool);
+    impl Future for BoolFut {
+        type Output = ();
+
+        fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+            match self.0 {
+                true => Poll::Ready(()),
+                false => Poll::Pending,
+            }
+        }
+    }
+
     #[test]
     fn wake_mutate() {
         let mut futures = MappedFutures::new();
-        insert_millis(&mut futures, 1, 100);
+        futures.insert(1, BoolFut(false));
         let fut = WakeMutateTest { inner: futures };
         assert!(block_on(fut));
     }
