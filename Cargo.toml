@@ -1,6 +1,6 @@
 [package]
 name = "mapped_futures"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 license = "GPL-3.0"
 keywords = ["future", "FuturesUnordered", "HashMap", "async", "stream"]
