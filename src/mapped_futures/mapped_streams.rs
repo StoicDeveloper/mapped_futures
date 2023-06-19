@@ -447,6 +447,7 @@ pub mod tests {
         assert_eq!(block_on(streams.next()), Some((2, None)));
         assert_eq!(block_on(streams.next()), Some((1, Some(()))));
         assert_eq!(block_on(streams.next()), Some((1, None)));
+        assert!(streams.is_empty());
     }
 
     #[test]

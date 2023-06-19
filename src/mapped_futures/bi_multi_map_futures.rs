@@ -217,7 +217,10 @@ impl<L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> Stream
         cx: &mut futures_task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
         match ready!(Pin::new(&mut self.futures).poll_next(cx)) {
-            Some(((left, right), output)) => Poll::Ready(Some((left, right, output))),
+            Some(((left, right), output)) => {
+                self.bi_multi_map.remove(&left, &right);
+                Poll::Ready(Some((left, right, output)))
+            }
             None => Poll::Ready(None),
         }
     }
@@ -375,6 +378,7 @@ pub mod tests {
         assert_eq!(block_on(futures.next()).unwrap(), ((2, 3, ())));
         assert_eq!(block_on(futures.next()).unwrap(), ((1, 1, ())));
         assert_eq!(block_on(futures.next()), None);
+        assert!(futures.is_empty());
     }
 
     #[test]

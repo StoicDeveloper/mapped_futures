@@ -1021,6 +1021,7 @@ pub mod tests {
         assert_eq!(block_on(futures.next()).unwrap().0, 2);
         assert_eq!(block_on(futures.next()).unwrap().0, 4);
         assert_eq!(block_on(futures.next()), None);
+        assert!(futures.is_empty());
     }
 
     #[test]
