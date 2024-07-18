@@ -1003,14 +1003,12 @@ impl<'a, K: Hash + Eq, Fut> FutMut<'a, K, Fut> {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::*;
+    use crate::mapped_futures::*;
     use futures::executor::block_on;
     use futures::future::LocalBoxFuture;
-    use futures::Future;
-    use futures_task::{Context, Poll};
     use futures_timer::Delay;
     use futures_util::StreamExt;
-    use std::{pin::Pin, time::Duration};
+    use std::time::Duration;
 
     fn insert_millis(futs: &mut MappedFutures<u32, Delay>, key: u32, millis: u64) -> bool {
         futs.insert(key, Delay::new(Duration::from_millis(millis)))
