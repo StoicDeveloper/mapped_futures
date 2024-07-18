@@ -5,7 +5,6 @@ use alloc::sync::{Arc, Weak};
 use core::cell::UnsafeCell;
 use core::fmt::{self, Debug};
 use core::hash::Hash;
-use core::iter::FromIterator;
 use core::marker::PhantomData;
 use core::mem;
 use core::pin::Pin;
@@ -41,6 +40,21 @@ use self::task::{HashTask, Task};
 
 mod ready_to_run_queue;
 use self::ready_to_run_queue::{Dequeue, ReadyToRunQueue};
+
+// To avoid code repetion, need the following features from an InnerFuturesUnordered:
+// - what to do when removing a task
+//      - implement FuturesRunner trait
+//      - release task
+// - what to return from a future
+//      -
+// - FuturesDataStructure<T: FuturesRunner<O>>
+//      - contains most of the existing code, will call FuturesRunner functions when:
+//      - completed a future `fn generate_output(task, output) -> O`
+//      - removing a task `fn remove_task(self, task);`
+// - FuturesUnordered would be implemented as:
+// - FuturesUnordered {inner: FuturesDataStructure<FutureRunnerImpl>}
+//      - remove_task -> does nothing
+//      - generate_output(task_item, output) -> output
 
 // TODO:
 // BiMapFutures -
@@ -285,7 +299,8 @@ impl<K: Hash + Eq, Fut, S: BuildHasher> MappedFutures<K, Fut, S> {
     pub fn cancel(&mut self, key: &K) -> bool {
         if let Some(task) = self.hash_set.get(key) {
             unsafe {
-                if let Some(_) = (*task.future.get()).take() {
+                if (*task.future.get()).is_some() {
+                    task.future.get().write(None);
                     let task_clone = task.inner.clone();
                     self.unlink(Arc::as_ptr(&task.inner));
                     self.release_task(task_clone);
@@ -633,9 +648,8 @@ impl<K: Hash + Eq, Fut: Future, S: BuildHasher> Stream for MappedFutures<K, Fut,
                         // have yielded a `None`
                         *self.is_terminated.get_mut() = true;
                         return Poll::Ready(None);
-                    } else {
-                        return Poll::Pending;
                     }
+                    return Poll::Pending;
                 }
                 Dequeue::Inconsistent => {
                     // At this point, it may be worth yielding the thread &
@@ -989,15 +1003,17 @@ impl<'a, K: Hash + Eq, Fut> FutMut<'a, K, Fut> {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::mapped_futures::*;
+    use crate::*;
     use futures::executor::block_on;
     use futures::future::LocalBoxFuture;
+    use futures::Future;
+    use futures_task::{Context, Poll};
     use futures_timer::Delay;
     use futures_util::StreamExt;
-    use std::time::Duration;
+    use std::{pin::Pin, time::Duration};
 
-    fn insert_millis(futs: &mut MappedFutures<u32, Delay>, key: u32, millis: u64) {
-        futs.insert(key, Delay::new(Duration::from_millis(millis)));
+    fn insert_millis(futs: &mut MappedFutures<u32, Delay>, key: u32, millis: u64) -> bool {
+        futs.insert(key, Delay::new(Duration::from_millis(millis)))
     }
 
     fn insert_millis_pinned(
@@ -1022,6 +1038,13 @@ pub mod tests {
         assert_eq!(block_on(futures.next()).unwrap().0, 4);
         assert_eq!(block_on(futures.next()), None);
         assert!(futures.is_empty());
+    }
+
+    #[test]
+    fn add_duplicate() {
+        let mut futures = MappedFutures::new();
+        assert_eq!(true, insert_millis(&mut futures, 1, 50));
+        assert_eq!(false, insert_millis(&mut futures, 1, 50));
     }
 
     #[test]

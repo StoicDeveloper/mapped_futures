@@ -153,7 +153,7 @@ dependencies = [
 
 [[package]]
 name = "mapped_futures"
-version = "0.1.7"
+version = "0.1.9"
 dependencies = [
  "bisetmap",
  "futures",

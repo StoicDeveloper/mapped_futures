@@ -5,7 +5,6 @@ use super::{FutMut, MappedFutures};
 
 use core::fmt::{self, Debug};
 use core::hash::Hash;
-use core::iter::FromIterator;
 use core::pin::Pin;
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;

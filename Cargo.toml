@@ -1,12 +1,12 @@
 [package]
 name = "mapped_futures"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 license = "GPL-3.0"
 keywords = ["future", "FuturesUnordered", "HashMap", "async", "stream"]
 categories = ["asynchronous"]
 description = "A collection of futures based on FuturesUnordered that supports insertion, removal and mutation of futures by key"
-repository = "https://github.com/StoicDeveloper/mapped_future"
+repository = "https://github.com/StoicDeveloper/mapped_futures"
 
 [dependencies]
 futures-core = "0.3.28"
