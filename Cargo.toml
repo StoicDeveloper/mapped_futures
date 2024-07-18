@@ -16,5 +16,5 @@ bisetmap = "0.1.6"
 
 [dev-dependencies]
 futures = "0.3.0"
-futures-timer = "3.0.2"
+futures-timer = "3.0.3"
 futures-lite = "1.12.0"
