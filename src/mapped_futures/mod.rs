@@ -300,7 +300,6 @@ impl<K: Hash + Eq, Fut, S: BuildHasher> MappedFutures<K, Fut, S> {
         if let Some(task) = self.hash_set.get(key) {
             unsafe {
                 if (*task.future.get()).is_some() {
-                    *task.future.get() = None;
                     let task_clone = task.inner.clone();
                     self.unlink(Arc::as_ptr(&task.inner));
                     self.release_task(task_clone);
