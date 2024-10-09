@@ -207,7 +207,7 @@ impl<L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> BiMultiMapFutures<
     }
 }
 
-impl<L: Clone + Hash + Eq, R: Clone + Hash + Eq, Fut: Future> Stream
+impl<L: Clone + Hash + Eq + 'static, R: Clone + Hash + Eq + 'static, Fut: Future + 'static> Stream
     for BiMultiMapFutures<L, R, Fut>
 {
     type Item = (L, R, Fut::Output);

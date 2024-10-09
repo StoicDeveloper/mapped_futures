@@ -98,12 +98,14 @@ impl<K: Hash + Eq, Fut> ArcWake for Task<K, Fut> {
     }
 }
 
-impl<K: Hash + Eq, Fut> Task<K, Fut> {
+impl<K: Hash + Eq + 'static, Fut: 'static> Task<K, Fut> {
     /// Returns a waker reference for this task without cloning the Arc.
-    pub(super) fn waker_ref(this: &Arc<Self>) -> WakerRef<'_> {
+    pub(super) unsafe fn waker_ref(this: &Arc<Self>) -> WakerRef<'_> {
         waker_ref(this)
     }
+}
 
+impl<K: Hash + Eq, Fut> Task<K, Fut> {
     pub(super) fn wake_by_ptr(this: *const Task<K, Fut>) {
         let task = unsafe { &*this };
         let inner = match task.ready_to_run_queue.upgrade() {
