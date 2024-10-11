@@ -623,9 +623,7 @@ impl<K: Hash + Eq, Fut, S: BuildHasher> MappedFutures<K, Fut, S> {
     }
 }
 
-impl<K: Hash + Eq + 'static, Fut: Future + 'static, S: BuildHasher> Stream
-    for MappedFutures<K, Fut, S>
-{
+impl<K: Hash + Eq, Fut: Future, S: BuildHasher> Stream for MappedFutures<K, Fut, S> {
     type Item = (K, Fut::Output);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -881,7 +879,7 @@ impl<K: Hash + Eq, Fut: Unpin, S: BuildHasher> IntoIterator for MappedFutures<K,
     }
 }
 
-impl<K: Hash + Eq, Fut: 'static> FromIterator<(K, Fut)> for MappedFutures<K, Fut, RandomState> {
+impl<K: Hash + Eq, Fut> FromIterator<(K, Fut)> for MappedFutures<K, Fut, RandomState> {
     fn from_iter<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = (K, Fut)>,
@@ -894,9 +892,7 @@ impl<K: Hash + Eq, Fut: 'static> FromIterator<(K, Fut)> for MappedFutures<K, Fut
     }
 }
 
-impl<K: Hash + Eq + 'static, Fut: Future + 'static, S: BuildHasher> FusedStream
-    for MappedFutures<K, Fut, S>
-{
+impl<K: Hash + Eq, Fut: Future, S: BuildHasher> FusedStream for MappedFutures<K, Fut, S> {
     fn is_terminated(&self) -> bool {
         self.is_terminated.load(Relaxed)
     }

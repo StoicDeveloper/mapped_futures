@@ -185,7 +185,7 @@ impl<'a, K: Hash + Eq, St: Stream + Unpin> StMut<'a, K, St> {
     }
 }
 
-impl<K: Hash + Eq + Clone + 'static, St: Stream + Unpin + 'static> Stream for MappedStreams<K, St> {
+impl<K: Hash + Eq + Clone, St: Stream + Unpin> Stream for MappedStreams<K, St> {
     type Item = (K, Option<St::Item>);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -207,9 +207,7 @@ impl<K: Hash + Eq + Clone + 'static, St: Stream + Unpin + 'static> Stream for Ma
     }
 }
 
-impl<K: Hash + Eq + Clone + 'static, St: Stream + Unpin + 'static> FusedStream
-    for MappedStreams<K, St>
-{
+impl<K: Hash + Eq + Clone, St: Stream + Unpin> FusedStream for MappedStreams<K, St> {
     fn is_terminated(&self) -> bool {
         self.inner.is_terminated()
     }

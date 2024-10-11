@@ -9,9 +9,9 @@ description = "A collection of futures based on FuturesUnordered that supports i
 repository = "https://github.com/StoicDeveloper/mapped_futures"
 
 [dependencies]
-futures-core = "0.3.28"
-futures-task = "0.3.28"
-futures-util = "0.3.28"
+futures-core = "0.3.31"
+futures-task = "0.3.31"
+futures-util = "0.3.31"
 bisetmap = "0.1.6"
 
 [dev-dependencies]

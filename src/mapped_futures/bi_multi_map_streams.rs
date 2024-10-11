@@ -193,11 +193,8 @@ impl<L: Clone + Hash + Eq, R: Clone + Hash + Eq, St: Stream + Unpin> BiMultiMapS
     }
 }
 
-impl<
-        L: Clone + Hash + Eq + 'static,
-        R: Clone + Hash + Eq + 'static,
-        St: Stream + Unpin + 'static,
-    > Stream for BiMultiMapStreams<L, R, St>
+impl<L: Clone + Hash + Eq, R: Clone + Hash + Eq, St: Stream + Unpin> Stream
+    for BiMultiMapStreams<L, R, St>
 {
     type Item = (L, R, Option<St::Item>);
 
