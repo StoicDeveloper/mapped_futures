@@ -439,9 +439,9 @@ pub mod tests {
     #[test]
     fn mutate_streams() {
         let mut streams = MappedStreams::new();
-        streams.insert(1, DelayStream::new(1, 50));
-        streams.insert(2, DelayStream::new(1, 60));
-        streams.get_mut(&1).unwrap().interval = 70;
+        streams.insert(1, DelayStream::new(1, 500));
+        streams.insert(2, DelayStream::new(1, 600));
+        streams.get_mut(&1).unwrap().interval = 700;
         assert_eq!(block_on(streams.next()), Some((2, Some(()))));
         assert_eq!(block_on(streams.next()), Some((2, None)));
         assert_eq!(block_on(streams.next()), Some((1, Some(()))));

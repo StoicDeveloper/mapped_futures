@@ -1069,16 +1069,16 @@ pub mod tests {
     #[test]
     fn mutate() {
         let mut futures = MappedFutures::new();
-        insert_millis(&mut futures, 1, 50);
-        insert_millis(&mut futures, 2, 100);
-        insert_millis(&mut futures, 3, 150);
-        insert_millis(&mut futures, 4, 200);
+        insert_millis(&mut futures, 1, 500);
+        insert_millis(&mut futures, 2, 1000);
+        insert_millis(&mut futures, 3, 1500);
+        insert_millis(&mut futures, 4, 2000);
 
         assert_eq!(block_on(futures.next()).unwrap().0, 1);
         futures
             .get_mut(&3)
             .unwrap()
-            .reset(Duration::from_millis(30));
+            .reset(Duration::from_millis(300));
         assert_eq!(block_on(futures.next()).unwrap().0, 3);
         assert_eq!(block_on(futures.next()).unwrap().0, 2);
         assert_eq!(block_on(futures.next()).unwrap().0, 4);
