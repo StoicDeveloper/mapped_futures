@@ -749,7 +749,7 @@ impl<K: Hash + Eq, Fut: Future, S: BuildHasher> Stream for MappedFutures<K, Fut,
                 // We are only interested in whether the future is awoken before it
                 // finishes polling, so reset the flag here.
                 task.woken.store(false, Relaxed);
-                let waker = Task::waker_ref(task);
+                let waker = unsafe { Task::waker_ref(task) };
                 let mut cx = Context::from_waker(&waker);
 
                 // Safety: We won't move the future ever again
