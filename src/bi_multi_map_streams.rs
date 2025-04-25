@@ -1,5 +1,5 @@
 use super::{task::Task, MappedStreams};
-use crate::mapped_futures::mapped_streams::StMut;
+use crate::mapped_streams::StMut;
 use bisetmap::BisetMap;
 use core::hash::Hash;
 use futures_core::Stream;
@@ -283,7 +283,7 @@ impl<'a, L: Clone + Hash + Eq, R: Clone + Hash + Eq, St: Stream + Unpin> LeftIte
 #[cfg(test)]
 #[allow(unused_imports)]
 pub mod tests {
-    use crate::mapped_futures::BiMultiMapStreams;
+    use crate::BiMultiMapStreams;
 
     use super::MappedStreams;
     use futures::executor::block_on;

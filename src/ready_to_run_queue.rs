@@ -1,10 +1,10 @@
-use crate::task::AtomicWaker;
 use alloc::sync::Arc;
 use core::cell::UnsafeCell;
 use core::hash::Hash;
 use core::ptr;
 use core::sync::atomic::AtomicPtr;
 use core::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
+use futures_util::task::AtomicWaker;
 
 use super::abort::abort;
 use super::task::Task;

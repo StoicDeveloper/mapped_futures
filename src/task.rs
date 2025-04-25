@@ -7,8 +7,8 @@ use std::ops::Deref;
 
 use super::abort::abort;
 use super::ReadyToRunQueue;
-use crate::task::ArcWake;
 use core::hash::Hash;
+use futures_util::task::ArcWake;
 
 pub(super) struct Task<K: Hash + Eq, Fut> {
     // The future

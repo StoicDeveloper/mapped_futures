@@ -1,8 +1,8 @@
 [package]
 name = "mapped_futures"
-version = "0.1.13"
+version = "0.2.0"
 edition = "2021"
-license = "GPL-3.0"
+license = "MIT"
 keywords = ["future", "FuturesUnordered", "HashMap", "async", "stream"]
 categories = ["asynchronous"]
 description = "A collection of futures based on FuturesUnordered that supports insertion, removal and mutation of futures by key"
