@@ -5,7 +5,7 @@ This library contains several structs that map keys to asynchronous tasks. It co
 You can create the mapping, insert futures, cancel them, and wait for the next completing future, which will return the future's output and its key. If the future is `Unpin` then a reference can be retrieved for mutation with `MappedFutures::get_mut()`, otherwise `MappedFutures::get_pin_mut()` must be used.
 
 ```
-use crate::mapped_futures::*;
+use crate::*;
 use futures::executor::block_on;
 use futures::future::LocalBoxFuture;
 use futures_timer::Delay;
@@ -26,7 +26,7 @@ assert_eq!(block_on(futures.next()), None);
 In order to retrieve any owned futures from the mapping, the futures have to be `Unpin`, such as by enclosing them in `Box::pin()`.
 
 ```
-use crate::mapped_futures::*;
+use crate::*;
 use futures::executor::block_on;
 use futures::future::LocalBoxFuture;
 use futures_timer::Delay;
